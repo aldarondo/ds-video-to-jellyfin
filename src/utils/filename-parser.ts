@@ -56,6 +56,19 @@ export function parseEpisodeFilename(filename: string): ParsedEpisodeInfo | null
     };
   }
 
+  // "-N-" or "- N -" standalone episode number (DS Video style without S/E markers).
+  // Used when content is stored with the episode number between dashes but no season prefix,
+  // e.g. "DoctorWho2006 -4- The Girl in the Fireplace" → episode 4.
+  // Season defaults to 1; the caller can override with the vsmeta season number.
+  const standaloneEp = filename.match(/(?:^|\s)-\s*(\d{1,3})\s*-\s+(.*)/);
+  if (standaloneEp) {
+    return {
+      season:  1,
+      episode: parseInt(standaloneEp[1], 10),
+      episodeTitle: cleanTitle(standaloneEp[2]),
+    };
+  }
+
   // NxNN pattern (e.g. 1x01)
   const nxnn = filename.match(/(\d{1,2})x(\d{2,3})(.*)/i);
   if (nxnn) {
@@ -115,6 +128,19 @@ export function parseMovieFilename(nameWithoutExt: string): ParsedMovieInfo {
   if (dotYear) {
     const title = dotYear[1].replace(/\./g, ' ').trim();
     return { title, year: parseInt(dotYear[2], 10) };
+  }
+
+  // Year appended directly to the end of a word without a separator: "ShowName2006".
+  // DS Video sometimes encodes the broadcast year into the filename this way,
+  // e.g. "DoctorWho2006 -4- The Girl in the Fireplace" → title "DoctorWho", year 2006.
+  // Requires a non-digit immediately before the year and a word-boundary after
+  // (whitespace, dash, underscore, or end of string).
+  const embedded = nameWithoutExt.match(/^(.*\D)(\d{4})(?=\s|[-_]|$)/);
+  if (embedded) {
+    const year = parseInt(embedded[2], 10);
+    if (year >= 1900 && year <= 2030) {
+      return { title: embedded[1].replace(/\./g, ' ').trim(), year };
+    }
   }
 
   // No year found — use whole name as title

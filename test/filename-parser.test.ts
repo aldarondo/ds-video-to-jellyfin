@@ -60,6 +60,31 @@ describe('parseEpisodeFilename', () => {
     expect(parseEpisodeFilename('Some Great Movie (2020)')).toBeNull();
   });
 
+  // --- DS Video "-N-" standalone episode pattern ---
+
+  it('parses DS Video "-N-" standalone episode number', () => {
+    const r = parseEpisodeFilename('DoctorWho2006 -4- The Girl in the Fireplace');
+    expect(r?.episode).toBe(4);
+    expect(r?.episodeTitle).toBe('The Girl in the Fireplace');
+  });
+
+  it('parses two-digit "-NN-" standalone episode', () => {
+    const r = parseEpisodeFilename('DoctorWho2006 -11- Fear Her');
+    expect(r?.episode).toBe(11);
+    expect(r?.episodeTitle).toBe('Fear Her');
+  });
+
+  it('parses "-N-" with spaces around the number', () => {
+    const r = parseEpisodeFilename('Show Title - 7 - Episode Name');
+    expect(r?.episode).toBe(7);
+    expect(r?.episodeTitle).toBe('Episode Name');
+  });
+
+  it('returns null when there is no episode number between dashes', () => {
+    // A plain dash-separated title with no digit group should not match
+    expect(parseEpisodeFilename('Tooth & Claw - Documentary')).toBeNull();
+  });
+
   it('handles no episode title after SxxExx', () => {
     const r = parseEpisodeFilename('Show.S03E01');
     expect(r?.season).toBe(3);
@@ -167,6 +192,31 @@ describe('parseMovieFilename', () => {
     const r = parseMovieFilename('The_Matrix_(1999)');
     expect(r.title).toBe('The Matrix');
     expect(r.year).toBe(1999);
+  });
+
+  // --- Embedded year (DS Video "ShowName2006" style) ---
+
+  it('extracts year appended directly to show name without separator', () => {
+    const r = parseMovieFilename('DoctorWho2006 -4- The Girl in the Fireplace');
+    expect(r.year).toBe(2006);
+    expect(r.title).toBe('DoctorWho');
+  });
+
+  it('extracts embedded year when followed by a dash separator', () => {
+    const r = parseMovieFilename('MyShow2005-Episode Title');
+    expect(r.year).toBe(2005);
+  });
+
+  it('does not extract a 4-digit number outside the valid year range', () => {
+    // 1066 is a year but unlikely to appear as a broadcast year
+    const r = parseMovieFilename('Battle1066Scene');
+    expect(r.year).toBeUndefined();
+  });
+
+  it('standard "Title Year" (space-separated) still works after embedded check', () => {
+    const r = parseMovieFilename('My Show 2019');
+    expect(r.year).toBe(2019);
+    expect(r.title).toBe('My Show');
   });
 });
 

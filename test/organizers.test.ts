@@ -256,18 +256,50 @@ describe('computeShowPaths', () => {
     expect(p.showKey).toBe('Breaking Bad (2008)');
   });
 
-  it('uses premiereYear over parsedTitle.year for folder naming', () => {
+  it('prefers file-path year (parsedTitle.year) over premiereYear', () => {
+    // File-path year takes priority so that same-name shows from different eras
+    // (e.g. "Doctor Who 1963" vs "Doctor Who 2005") land in separate folders.
     const p = computeShowPaths(
       ROOT,
       '/source/ep.mkv',
       emptyMeta({ contentType: 2, title: 'My Show', season: 1, episode: 1 }),
       null,
-      { title: 'My Show', year: 2020 },
+      { title: 'My Show', year: 2006 },  // year extracted from filename
       undefined,
-      2018  // premiereYear takes priority
+      1973  // vsmeta-derived premiereYear — should NOT win
     );
-    expect(p.showFolder).toContain('2018');
-    expect(p.showFolder).not.toContain('2020');
+    expect(p.showFolder).toContain('2006');
+    expect(p.showFolder).not.toContain('1973');
+  });
+
+  it('falls back to premiereYear when no file-path year is available', () => {
+    const p = computeShowPaths(
+      ROOT,
+      '/source/ep.mkv',
+      emptyMeta({ contentType: 2, title: 'My Show', season: 1, episode: 1 }),
+      null,
+      { title: 'My Show' },  // no year in filename
+      undefined,
+      2008  // vsmeta premiereYear used as fallback
+    );
+    expect(p.showFolder).toContain('2008');
+  });
+
+  it('prefers parsedEpisode.episode over meta.episode when both are available', () => {
+    // Simulates the Doctor Who case: vsmeta says E01 for multiple episodes
+    // but filenames carry the real episode numbers (-2-, -4-, etc.)
+    const p = computeShowPaths(
+      ROOT,
+      '/source/DoctorWho2006 -4- The Girl in the Fireplace.divx',
+      emptyMeta({ contentType: 2, title: 'Doctor Who', season: 2, episode: 1 }),
+      { season: 1, episode: 4, episodeTitle: 'The Girl in the Fireplace' },
+      { title: 'DoctorWho', year: 2006 },
+    );
+    expect(p.episode).toBe(4);           // from filename, not vsmeta E01
+    expect(p.season).toBe(2);            // from vsmeta (correct)
+    expect(p.numberSource).toBe('filename');
+    expect(p.showFolder).toContain('2006');
+    expect(p.videoFile).toContain('S02E04');
   });
 
   it('extracts year from sourceShowName when no other year is available', () => {

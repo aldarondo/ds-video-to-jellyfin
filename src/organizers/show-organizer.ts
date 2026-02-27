@@ -93,10 +93,13 @@ export function computeShowPaths(
   //   3. year in parentheses in the source show folder name (e.g. "My Show (2020)")
   // We intentionally skip raw meta.year / meta.releaseDate here because for TV
   // shows those fields hold the individual EPISODE air date, not the premiere year.
-  const showYear =
-    premiereYear ||
-    parsedTitle.year ||
-    extractYearFromName(sourceShowName);
+  // File-path year (from the filename or source folder name) takes priority over
+  // the vsmeta-derived premiere year.  When the same show title spans multiple
+  // eras (e.g. "Doctor Who (1963)" vs "Doctor Who (2005)"), the year embedded in
+  // the filename or its parent folder is the most reliable era discriminator —
+  // vsmeta data can be incorrectly tagged across different versions of a show.
+  const fileYear  = parsedTitle.year || extractYearFromName(sourceShowName);
+  const showYear  = fileYear || premiereYear;
 
   const showFolderName = showYear ? `${showTitle} (${showYear})` : showTitle;
 
@@ -105,9 +108,18 @@ export function computeShowPaths(
   let season: number;
   let episode: number;
   if (meta.season != null || meta.episode != null) {
-    season  = meta.season  ?? 1;
-    episode = meta.episode ?? 1;
-    numberSource = 'vsmeta';
+    season = meta.season ?? 1;
+    // Prefer the episode number from the filename when parsedEpisode is available.
+    // Filenames (as curated by the user) are more reliable for episode ordering
+    // than vsmeta data that can be incorrectly tagged (e.g. multiple episodes all
+    // marked E01 in vsmeta when the filename clearly has -2-, -4-, etc.).
+    if (parsedEpisode !== null) {
+      episode      = parsedEpisode.episode;
+      numberSource = 'filename';
+    } else {
+      episode      = meta.episode ?? 1;
+      numberSource = 'vsmeta';
+    }
   } else if (parsedEpisode != null) {
     season  = parsedEpisode.season;
     episode = parsedEpisode.episode;

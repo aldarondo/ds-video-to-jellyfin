@@ -168,6 +168,26 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
     log(`  [show nfo] ${showKey} → ${showNfoPath}`);
   }
 
+  // Detect and report shows whose title appears with multiple premiere years.
+  // This surfaces cases like "Doctor Who (1963)" and "Doctor Who (2006)" in the
+  // same output tree — different eras of the same show treated as separate series.
+  // Grouping is by the title portion only (everything before the trailing "(YYYY)").
+  {
+    const showsByTitle = new Map<string, string[]>();
+    for (const showKey of showMetaMap.keys()) {
+      const title = showKey.replace(/\s*\(\d{4}\)$/, '');
+      const arr   = showsByTitle.get(title) ?? [];
+      arr.push(showKey);
+      showsByTitle.set(title, arr);
+    }
+    for (const [title, keys] of showsByTitle) {
+      if (keys.length > 1) {
+        log(`[info] "${title}" found with ${keys.length} premiere years — ` +
+            `treating as separate shows: ${keys.join(', ')}`);
+      }
+    }
+  }
+
   // Write CSV migration reports (skipped in dry-run: no files were actually written)
   if (!dryRun) {
     // --- Shows CSV ---
