@@ -6,6 +6,7 @@ import {
   formatSeason,
   formatEpisode,
   extractYear,
+  isExtrasFile,
 } from '../src/utils/filename-parser';
 
 describe('parseEpisodeFilename', () => {
@@ -191,4 +192,87 @@ describe('extractYear', () => {
   it('extracts year from ISO date', () => expect(extractYear('2020-06-15')).toBe(2020));
   it('extracts year from plain string', () => expect(extractYear('2008')).toBe(2008));
   it('returns undefined for non-year string', () => expect(extractYear('no year here')).toBeUndefined());
+});
+
+describe('isExtrasFile', () => {
+  // --- True positives: common extras patterns ---
+  it('detects "DVD Extras" in DS Video filename', () => {
+    expect(isExtrasFile('Dilbert - DVD Extras - Dogbert Speaks')).toBe(true);
+  });
+  it('detects "Extras" as standalone word', () => {
+    expect(isExtrasFile('Season 1 Extras')).toBe(true);
+  });
+  it('detects "Extra" (singular)', () => {
+    expect(isExtrasFile('Bonus Extra Content')).toBe(true);
+  });
+  it('detects "Making of"', () => {
+    expect(isExtrasFile('Making of The Dark Knight')).toBe(true);
+  });
+  it('detects "Making-of" (hyphenated)', () => {
+    expect(isExtrasFile('Making-of Featurette')).toBe(true);
+  });
+  it('detects "Interview"', () => {
+    expect(isExtrasFile('Interview with the Director')).toBe(true);
+  });
+  it('detects "Interviews" (plural)', () => {
+    expect(isExtrasFile('Cast Interviews')).toBe(true);
+  });
+  it('detects "Deleted Scenes"', () => {
+    expect(isExtrasFile('Deleted Scenes')).toBe(true);
+  });
+  it('detects "Deleted Scene" (singular)', () => {
+    expect(isExtrasFile('Deleted Scene - The Alternate Ending')).toBe(true);
+  });
+  it('detects "Behind the Scenes"', () => {
+    expect(isExtrasFile('Behind the Scenes')).toBe(true);
+  });
+  it('detects "Behind-the-Scenes" (hyphenated)', () => {
+    expect(isExtrasFile('Behind-the-Scenes Documentary')).toBe(true);
+  });
+  it('detects "Featurette"', () => {
+    expect(isExtrasFile('Production Featurette')).toBe(true);
+  });
+  it('detects "Featurettes" (plural)', () => {
+    expect(isExtrasFile('Featurettes')).toBe(true);
+  });
+  it('detects "Trailer"', () => {
+    expect(isExtrasFile('Official Trailer')).toBe(true);
+  });
+  it('detects "Trailers" (plural)', () => {
+    expect(isExtrasFile('Trailers and Teasers')).toBe(true);
+  });
+  it('detects "Bloopers"', () => {
+    expect(isExtrasFile('Season 2 Bloopers')).toBe(true);
+  });
+  it('detects "Outtakes"', () => {
+    expect(isExtrasFile('Outtakes and Bloopers')).toBe(true);
+  });
+  it('detects "Shorts"', () => {
+    expect(isExtrasFile('Animated Shorts')).toBe(true);
+  });
+  it('detects "Bonus"', () => {
+    expect(isExtrasFile('Bonus Features')).toBe(true);
+  });
+  it('detects "BTS" abbreviation', () => {
+    expect(isExtrasFile('BTS Footage')).toBe(true);
+  });
+  it('is case-insensitive', () => {
+    expect(isExtrasFile('DVD EXTRAS')).toBe(true);
+    expect(isExtrasFile('making of')).toBe(true);
+  });
+
+  // --- True negatives: regular episodes should not match ---
+  it('returns false for a plain episode name', () => {
+    expect(isExtrasFile('Pilot Episode')).toBe(false);
+  });
+  it('returns false for SxxExx episode', () => {
+    expect(isExtrasFile('Show S01E01 Episode Title')).toBe(false);
+  });
+  it('returns false for a show title with "extra" inside a word', () => {
+    // "Extraordinary" contains "extra" but not as a word boundary
+    expect(isExtrasFile('Extraordinary Rendition')).toBe(false);
+  });
+  it('returns false for a movie filename', () => {
+    expect(isExtrasFile('The Dark Knight (2008)')).toBe(false);
+  });
 });

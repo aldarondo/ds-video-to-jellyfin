@@ -155,6 +155,37 @@ export function extractYear(dateStr: string): number | undefined {
   return match ? parseInt(match[1], 10) : undefined;
 }
 
+/**
+ * Extras keyword patterns recognised by DS Video, Jellyfin, and Emby.
+ * Matches filenames that represent supplementary content (DVD extras, making-of
+ * featurettes, interview clips, deleted scenes, etc.) rather than regular episodes.
+ *
+ * Word-boundary anchors prevent false matches on words that merely contain one of
+ * these roots (e.g. "Extraordinary" won't match `extra`).
+ */
+const EXTRAS_PATTERN =
+  /\b(?:extras?|bts|featurettes?|behind[\s_-]the[\s_-]scenes?|deleted[\s_-]scenes?|interviews?|trailers?|bloopers?|outtakes?|shorts?|making[\s_-]of|bonus)\b/i;
+
+/**
+ * Returns true when a filename (without extension) looks like a bonus extra
+ * rather than a regular episode.  Files matching this pattern are routed to an
+ * `Extras` sub-folder instead of a Season folder so Jellyfin surfaces them as
+ * supplementary content.
+ *
+ * @param nameWithoutExt — bare filename with no extension or path components
+ *
+ * Examples:
+ *   "Dilbert - DVD Extras - Dogbert Speaks"  → true
+ *   "Making of The Dark Knight"              → true
+ *   "Interview with the Director"            → true
+ *   "Deleted Scenes"                         → true
+ *   "Show S01E01 Episode Title"              → false (episode pattern present)
+ *   "Normal Episode Name"                    → false
+ */
+export function isExtrasFile(nameWithoutExt: string): boolean {
+  return EXTRAS_PATTERN.test(nameWithoutExt);
+}
+
 // Strip leading separators and media extensions from the remainder after SxxExx
 function cleanTitle(rest: string): string | undefined {
   const cleaned = rest

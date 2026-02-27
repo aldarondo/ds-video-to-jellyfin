@@ -14,6 +14,7 @@ import {
   extractYear,
   formatSeason,
   formatEpisode,
+  isExtrasFile,
 } from './utils/filename-parser.js';
 import { scanDirectory, ScanResult } from './utils/scanner.js';
 import { extractImages } from './utils/image-extractor.js';
@@ -68,9 +69,6 @@ export interface MigrateResult {
  */
 export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
   const { input, output, dryRun, wetRun, log, warn } = opts;
-
-  if (dryRun)  log('Dry-run mode — no files will be written.');
-  if (wetRun && !dryRun) log('Wet-run mode — folders and .nfo files will be created; video/image files replaced with .txt placeholders.');
 
   log(`Scanning ${input}...`);
   const scanResults = scanDirectory(input);
@@ -496,6 +494,61 @@ function processFile({
       sourceShowName,
       premiereYear
     );
+
+    // --- Extras detection -------------------------------------------------------
+    // Files that carry a recognised bonus/extras keyword (DVD Extras, Making of,
+    // Interview, Deleted Scenes, etc.) AND have no parseable SxxExx / NxNN episode
+    // pattern are routed to <ShowFolder>/Extras/ with their original filename
+    // preserved.  The season/episode machinery (clamping, NFO, CSV tracking) is
+    // bypassed entirely — extras are supplementary content, not episodes.
+    if (parsedEpisode === null && isExtrasFile(nameWithoutExt)) {
+      const extrasFolder    = path.join(paths.showFolder, 'Extras');
+      const origBasename    = path.basename(videoFile);
+      const extrasVideoFile = path.join(extrasFolder, origBasename);
+
+      log(`  [extra] ${origBasename} → "${paths.showKey}" Extras/`);
+      if (dryRun) return 'ok';
+
+      ensureDir(extrasFolder);
+      copyOrMoveOrPlaceholder(videoFile, extrasVideoFile, move, effectiveWetRun);
+
+      // Carry the .vsmeta sidecar alongside so DS Video still recognises the file
+      if (vsmetaFile) {
+        copyOrMoveOrPlaceholder(
+          vsmetaFile,
+          path.join(extrasFolder, path.basename(vsmetaFile)),
+          false,
+          effectiveWetRun
+        );
+      }
+
+      // Accumulate show-level metadata so tvshow.nfo is still generated even when
+      // the show folder contains only extras (no regular episodes).
+      if (!showMetaMap.has(paths.showKey)) {
+        const showTitle = paths.showKey.replace(/\s*\(\d{4}\)$/, '');
+        const yearStr   = paths.showKey.match(/\((\d{4})\)$/)?.[1];
+        showMetaMap.set(paths.showKey, {
+          showTitle,
+          year: yearStr ? parseInt(yearStr, 10) : undefined,
+          _nfoPath: paths.showNfoFile,
+        } as ShowNfoInput & { _nfoPath: string });
+      }
+      mergeShowMeta(showMetaMap.get(paths.showKey)!, meta);
+
+      // Extract show artwork (poster/fanart) if not already present
+      if (!noImages) {
+        const posterPath    = path.join(paths.showFolder, 'poster.jpg');
+        const showHasPoster = fs.existsSync(posterPath) ||
+          (effectiveWetRun && fs.existsSync(posterPath + '.txt'));
+        if (!showHasPoster || overwrite) {
+          const images = loadImagesForFile(vsmetaFile);
+          extractImages({ ...meta, ...images }, videoFile, paths.showFolder, false, effectiveWetRun, overwrite);
+        }
+      }
+
+      return 'ok';
+    }
+    // ---------------------------------------------------------------------------
 
     // Clamp implausible season numbers (> 50) to Season 00.
     // Cartoons and other content without formal season structure are often stored
