@@ -21,6 +21,7 @@ import {
   formatSeason,
   formatEpisode,
   sanitizePathComponent,
+  parseMovieFilename,
 } from '../utils/filename-parser.js';
 
 export interface ShowPaths {
@@ -158,14 +159,31 @@ export function computeShowPaths(
   };
 }
 
+/** Plausible year range for TV shows and films. */
+const YEAR_MIN = 1900;
+const YEAR_MAX = 2100;
+
 /**
- * Extract a 4-digit year from a parenthesised suffix in a name,
- * e.g. "My Show (2020)" → 2020.  Returns undefined if not found.
+ * Extract a 4-digit year from a folder/show name, trying several formats:
+ *   1. Parenthesised suffix — "My Show (2020)"   (most unambiguous, checked first)
+ *   2. Space/dot/embedded — "Seinfeld 1989", "Breaking.Bad.2008", "ShowName2006"
+ *      (via parseMovieFilename, with range guard to exclude show titles like "The 4400")
+ * Returns undefined if no plausible year is found.
  */
 function extractYearFromName(name?: string): number | undefined {
   if (!name) return undefined;
-  const m = name.match(/\((\d{4})\)/);
-  return m ? parseInt(m[1], 10) : undefined;
+
+  // "(YYYY)" is explicit and unambiguous.
+  const parens = name.match(/\((\d{4})\)/);
+  if (parens) return parseInt(parens[1], 10);
+
+  // Fall back to filename-style parsing for "ShowName YYYY", "Show.Name.YYYY", etc.
+  const parsed = parseMovieFilename(name);
+  if (parsed.year && parsed.year >= YEAR_MIN && parsed.year <= YEAR_MAX) {
+    return parsed.year;
+  }
+
+  return undefined;
 }
 
 /**

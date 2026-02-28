@@ -302,16 +302,41 @@ describe('computeShowPaths', () => {
     expect(p.videoFile).toContain('S02E04');
   });
 
-  it('extracts year from sourceShowName when no other year is available', () => {
+  it('extracts year from sourceShowName "(YYYY)" pattern', () => {
     const p = computeShowPaths(
       ROOT,
       '/source/ep.mkv',
       emptyMeta({ contentType: 2, title: 'Dark Angel', season: 1, episode: 1 }),
       null,
       { title: 'Dark Angel' },
-      'Dark Angel (2000)'  // year comes from here
+      'Dark Angel (2000)'
     );
     expect(p.showFolder).toContain('2000');
+  });
+
+  it('extracts year from sourceShowName space-separated format "ShowName YYYY"', () => {
+    const p = computeShowPaths(
+      ROOT,
+      '/source/ep.mkv',
+      emptyMeta({ contentType: 2, title: 'Seinfeld', season: 1, episode: 1 }),
+      null,
+      { title: 'Seinfeld' },
+      'Seinfeld 1989'  // year embedded in folder name without parentheses
+    );
+    expect(p.showFolder).toContain('1989');
+  });
+
+  it('does not mistake show titles like "The 4400" for a year', () => {
+    const p = computeShowPaths(
+      ROOT,
+      '/source/ep.mkv',
+      emptyMeta({ contentType: 2, title: 'The 4400', season: 1, episode: 1 }),
+      null,
+      { title: 'The 4400' },
+      'The 4400'  // "4400" is the title, not a valid year
+    );
+    // 4400 is outside 1900–2100, so no year should be appended
+    expect(p.showFolder).toBe(path.join(ROOT, 'The 4400'));
   });
 
   it('omits year from show folder when none is available', () => {

@@ -374,10 +374,18 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
   // A "no year" show is one whose title is absent from showPremiereYears AND for
   // which the filename and source folder name contain no parseable year.
   // The check mirrors what computeShowPaths() does at runtime:
-  //   fileYear = parsedTitle.year || year extracted from "(YYYY)" in sourceShowName
-  const extractParensYear = (name?: string): number | undefined => {
-    const m = name?.match(/\((\d{4})\)/);
-    return m ? parseInt(m[1], 10) : undefined;
+  //   fileYear = parsedTitle.year || extractYearFromName(sourceShowName)
+  // extractYearFromName handles "(YYYY)", space-separated, dot-separated, and
+  // embedded years — e.g. "Seinfeld 1989", "Breaking.Bad.2008", "ShowName2006".
+  // Years outside 1900–2100 are treated as part of the title (e.g. "The 4400").
+  const extractFolderYear = (name?: string): number | undefined => {
+    if (!name) return undefined;
+    const parens = name.match(/\((\d{4})\)/);
+    if (parens) return parseInt(parens[1], 10);
+    const parsed = parseMovieFilename(name);
+    return (parsed.year && parsed.year >= 1900 && parsed.year <= 2100)
+      ? parsed.year
+      : undefined;
   };
 
   const showsWithNoYear = new Map<string, string>(); // title → example file path
@@ -393,7 +401,7 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
     if (showPremiereYears.has(title)) continue; // year already known
     if (showsWithNoYear.has(title)) continue;   // already noted
 
-    const fileYear = parsedTitle.year || extractParensYear(sourceShowName);
+    const fileYear = parsedTitle.year || extractFolderYear(sourceShowName);
     if (fileYear) continue; // file-path year will supply the year at runtime
 
     showsWithNoYear.set(title, videoFile);
