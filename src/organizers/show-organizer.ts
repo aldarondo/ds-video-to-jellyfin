@@ -91,7 +91,8 @@ export function computeShowPaths(
   // Priority:
   //   1. premiereYear — pre-computed minimum year across all episodes of this show
   //   2. parsedTitle.year — year embedded in the source filename (reliable)
-  //   3. year in parentheses in the source show folder name (e.g. "My Show (2020)")
+  //   3. year in source folder or parent folders (e.g. "My Show (2020)" or parent
+  //      "ShowName 1974-1978/DiscFolder/")
   // We intentionally skip raw meta.year / meta.releaseDate here because for TV
   // shows those fields hold the individual EPISODE air date, not the premiere year.
   // File-path year (from the filename or source folder name) takes priority over
@@ -99,7 +100,7 @@ export function computeShowPaths(
   // eras (e.g. "Doctor Who (1963)" vs "Doctor Who (2005)"), the year embedded in
   // the filename or its parent folder is the most reliable era discriminator —
   // vsmeta data can be incorrectly tagged across different versions of a show.
-  const fileYear  = parsedTitle.year || extractYearFromName(sourceShowName);
+  const fileYear  = parsedTitle.year || extractYearFromPath(sourceFile, sourceShowName);
   const showYear  = fileYear || premiereYear;
 
   const showFolderName = showYear ? `${showTitle} (${showYear})` : showTitle;
@@ -181,6 +182,40 @@ function extractYearFromName(name?: string): number | undefined {
   const parsed = parseMovieFilename(name);
   if (parsed.year && parsed.year >= YEAR_MIN && parsed.year <= YEAR_MAX) {
     return parsed.year;
+  }
+
+  return undefined;
+}
+
+/**
+ * Extract a year from a folder path, checking the immediate show folder and
+ * then parent folders up the tree. This handles cases where the show name is
+ * in a parent folder, e.g.:
+ *   Six Million Dollar Man 1974-1978/
+ *     SIX_MILLION_DOLLAR_MAN_S2_D1/
+ *       season.02.ep.01.avi
+ * (where the disc folder has no year but the show folder does)
+ */
+function extractYearFromPath(sourceFile: string, sourceShowName?: string): number | undefined {
+  if (!sourceShowName) return undefined;
+
+  // First try the immediate show name
+  let year = extractYearFromName(sourceShowName);
+  if (year) return year;
+
+  // If not found, walk up the directory tree from the video file
+  // This finds years in parent/ancestor folder names
+  let currentPath = path.dirname(sourceFile);
+  for (let i = 0; i < 5; i++) {
+    // limit walk to 5 levels to avoid walking to filesystem root
+    const parentPath = path.dirname(currentPath);
+    if (parentPath === currentPath) break; // reached filesystem root
+
+    const parentFolderName = path.basename(parentPath);
+    year = extractYearFromName(parentFolderName);
+    if (year) return year;
+
+    currentPath = parentPath;
   }
 
   return undefined;
