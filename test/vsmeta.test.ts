@@ -8,7 +8,7 @@
  *   field  1 varint  – contentType (1=movie, 2=TV show)
  *   field  2 string  – title
  *   field  3 string  – originalTitle
- *   field  4 string  – tagline
+ *   field  4 string  – episodeTitle
  *   field  5 varint  – year
  *   field  6 string  – releaseDate "YYYY-MM-DD"
  *   field  8 string  – plot
@@ -139,9 +139,9 @@ describe('parseVsMeta', () => {
     expect(parseVsMeta(buf).originalTitle).toBe('Le Chevalier Noir');
   });
 
-  it('parses tagline (field 4)', () => {
+  it('parses episodeTitle (field 4)', () => {
     const buf = buildVsMeta(stringField(4, 'Why so serious?'));
-    expect(parseVsMeta(buf).tagline).toBe('Why so serious?');
+    expect(parseVsMeta(buf).episodeTitle).toBe('Why so serious?');
   });
 
   it('parses year varint (field 5)', () => {
@@ -300,7 +300,7 @@ describe('parseVsMeta', () => {
     const result = parseVsMeta(buf);
     expect(result.contentType).toBe(1);
     expect(result.title).toBe('Inception');
-    expect(result.tagline).toBe('Your mind is the scene of the crime.');
+    expect(result.episodeTitle).toBe('Your mind is the scene of the crime.');
     expect(result.year).toBe(2010);
     expect(result.releaseDate).toBe('2010-07-16');
     expect(result.plot).toBe('A thief who steals corporate secrets...');
@@ -450,9 +450,9 @@ describe('parseVsMeta (integration — real .vsmeta files)', () => {
       expect(result.releaseDate).toBe('2018-06-05');
     });
 
-    it('tagline is "He\'s back."', () => {
+    it('episodeTitle is "He\'s back."', () => {
       if (skip()) return;
-      expect(result.tagline).toBe("He's back.");
+      expect(result.episodeTitle).toBe("He's back.");
     });
 
     it('plot contains "Ray Breslin"', () => {

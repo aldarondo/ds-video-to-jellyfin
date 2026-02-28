@@ -10,9 +10,10 @@
  *     field  1 (varint)  – content type: 1=movie, 2=TV show
  *     field  2 (string)  – title (show title for TV)
  *     field  3 (string)  – original title
- *     field  4 (string)  – tagline
+ *     field  4 (string)  – episode title for TV shows; tagline for movies
  *     field  5 (varint)  – year (0 for TV shows; year is in field 19)
  *     field  6 (string)  – release date "YYYY-MM-DD" (omitted for TV shows)
+ *     field  7 (varint)  – locked flag (1 = metadata is locked)
  *     field  8 (string)  – plot (omitted for TV shows; plot is in field 19)
  *     field  9 (string)  – JSON: "com.synology.TheMovieDb" with backdrop/poster URLs,
  *                          rating.themoviedb, reference.imdb, reference.themoviedb
@@ -30,15 +31,17 @@
  *                            field 2 (varint)  = episode number
  *                            field 3 (varint)  = year
  *                            field 4 (string)  = air date "YYYY-MM-DD"
+ *                            field 5 (varint)  = show locked flag (1 = locked)
  *                            field 6 (string)  = episode plot
  *                            field 7 (string)  = episode thumbnail: base64-encoded JPEG
  *                            field 8 (string)  = MD5 hash of thumbnail
  *                            field 9 (string)  = JSON with TMDb backdrop/poster URLs
  *                            field 10 (bytes)  = episode backdrop: nested image message
- *                                                  (same structure as outer field 21;
- *                                                   inner field 1 = base64-encoded JPEG)
+ *                                                  (same structure as outer field 21)
  *     field 21 (bytes)   – backdrop/fanart nested message (movies only):
  *                            field 1 (string)  = base64-encoded JPEG
+ *                            field 2 (string)  = MD5 hash of backdrop
+ *                            field 3 (varint)  = Unix timestamp (seconds)
  */
 
 // Wire type constants
@@ -53,52 +56,60 @@ const NO_RATING = BigInt('18446744073709551615');
 export interface VsMetaData {
   /** 1 = movie, 2 = TV show */
   contentType: 1 | 2;
-  /** Show/movie title */
+  /** Show/movie title (field 2) */
   title: string;
-  /** Original title (often the same as title) */
+  /** Original title, often the same as title (field 3) */
   originalTitle: string;
-  /** Short tagline */
-  tagline: string;
-  /** Release year (outer field 5, or episode year for TV shows) */
+  /** Episode title for TV shows; tagline for movies (field 4) */
+  episodeTitle: string;
+  /** Release year (field 5; for TV shows use airDate/year from field 19) */
   year: number;
-  /** Release date "YYYY-MM-DD" (outer field 6, or episode air date for TV shows) */
+  /** Release date "YYYY-MM-DD" (field 6; for TV shows populated from episode air date) */
   releaseDate: string;
-  /** Plot / synopsis */
+  /** Metadata is locked/frozen (field 7) */
+  locked: boolean;
+  /** Plot / synopsis (field 8; for TV shows populated from episode plot) */
   plot: string;
 
-  /** TMDb movie/show ID (from JSON field 9) */
+  /** TMDb movie/show ID (from JSON in field 9) */
   tmdbId: string;
-  /** IMDb ID, e.g. "tt1234567" (from JSON field 9) */
+  /** IMDb ID, e.g. "tt1234567" (from JSON in field 9) */
   imdbId: string;
 
   /** Content rating string, e.g. "R", "PG-13" (field 11) */
   contentRating: string;
-  /** Audience rating 0-10 (field 12 divided by 10, or from JSON) */
+  /** Audience rating 0-10 (field 12 ÷ 10, or from JSON fallback) */
   rating: number;
 
-  /** Actor names (from field 10 nested, sub-field 1) */
+  /** Actor names (field 10, sub-field 1) */
   actors: string[];
-  /** Director names (from field 10 nested, sub-field 2) */
+  /** Director names (field 10, sub-field 2) */
   directors: string[];
-  /** Genre names (from field 10 nested, sub-field 3) */
+  /** Genre names (field 10, sub-field 3) */
   genres: string[];
-  /** Writer names (from field 10 nested, sub-field 4) */
+  /** Writer names (field 10, sub-field 4) */
   writers: string[];
 
-  /** Decoded poster JPEG (field 17 for movies; episode thumbnail for TV) */
+  /** Decoded poster JPEG (field 17 for movies; episode thumbnail for TV shows) */
   posterImage?: Buffer;
-  /** Decoded backdrop/fanart JPEG (field 21 nested for movies; episode backdrop for TV) */
+  /** Decoded backdrop/fanart JPEG (field 21 for movies; episode backdrop for TV shows) */
   backdropImage?: Buffer;
+  /** MD5 hex string of the backdrop image (field 21 sub-field 2) */
+  backdropMd5?: string;
+  /** Unix timestamp (seconds) embedded in the backdrop image message (field 21 sub-field 3) */
+  backdropTimestamp?: number;
 
-  // TV-show episode fields (all sourced from field 19)
-  /** Season number */
+  // TV-show episode fields (sourced from field 19)
+  /** Season number (field 19, sub-field 1) */
   season?: number;
-  /** Episode number */
+  /** Episode number (field 19, sub-field 2) */
   episode?: number;
-  /** Episode air date "YYYY-MM-DD" */
+  /** Episode air date "YYYY-MM-DD" (field 19, sub-field 4) */
   airDate?: string;
-  /** Episode-specific plot (same as result.plot for TV) */
+  /** Episode-specific plot (field 19, sub-field 6) */
   episodePlot?: string;
+  /** Show-level locked flag (field 19, sub-field 5; TV shows only) */
+  showLocked?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,11 +185,24 @@ function tryDecodeBase64Jpeg(data: Buffer): Buffer | undefined {
   return undefined;
 }
 
+/** Parsed contents of a nested image message (outer field 21 / episode field 10). */
+export interface BackdropData {
+  /** Decoded JPEG image (sub-field 1, base64-encoded) */
+  image?: Buffer;
+  /** MD5 hex string of the image (sub-field 2) */
+  md5?: string;
+  /** Unix timestamp in seconds (sub-field 3) */
+  timestamp?: number;
+}
+
 /**
- * Parse a "nested image" protobuf message (as used in outer field 21).
- * Inner field 1 = base64 JPEG string.  Returns the decoded JPEG or undefined.
+ * Parse a "nested image" protobuf message (outer field 21 / episode field 10).
+ *   field 1 (string) = base64-encoded JPEG
+ *   field 2 (string) = MD5 hex hash
+ *   field 3 (varint) = Unix timestamp (seconds)
  */
-function parseNestedImageMessage(buf: Buffer): Buffer | undefined {
+function parseNestedImageMessage(buf: Buffer): BackdropData {
+  const result: BackdropData = {};
   let pos = 0;
   while (pos < buf.length) {
     const [fieldNum, wireType, newPos] = readTag(buf, pos);
@@ -186,14 +210,19 @@ function parseNestedImageMessage(buf: Buffer): Buffer | undefined {
     if (wireType === WIRE_LENGTH) {
       const [data, nextPos] = readLengthDelimited(buf, pos);
       pos = nextPos;
-      if (fieldNum === 1) {
-        return tryDecodeBase64Jpeg(data);
+      switch (fieldNum) {
+        case 1: result.image = tryDecodeBase64Jpeg(data); break;
+        case 2: try { result.md5 = data.toString('ascii'); } catch { /* ignore */ } break;
       }
+    } else if (wireType === WIRE_VARINT) {
+      const [val, nextPos] = readVarint(buf, pos);
+      pos = nextPos;
+      if (fieldNum === 3) result.timestamp = Number(val);
     } else {
       pos = skipField(buf, pos, wireType);
     }
   }
-  return undefined;
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -244,8 +273,9 @@ interface EpisodeDetails {
   year: number;
   airDate: string;
   plot: string;
+  locked: boolean;
   thumbnail?: Buffer;
-  backdrop?: Buffer;
+  backdrop?: BackdropData;
 }
 
 /** Parse field 19 – the TV episode details nested message. */
@@ -256,6 +286,7 @@ function parseEpisodeDetails(buf: Buffer, skipImages = false): EpisodeDetails {
     year: 0,
     airDate: '',
     plot: '',
+    locked: false,
   };
 
   let pos = 0;
@@ -270,6 +301,7 @@ function parseEpisodeDetails(buf: Buffer, skipImages = false): EpisodeDetails {
         case 1: result.season  = Number(val); break;
         case 2: result.episode = Number(val); break;
         case 3: result.year    = Number(val); break;
+        case 5: result.locked  = val !== 0n;  break;
       }
     } else if (wireType === WIRE_LENGTH) {
       const [data, nextPos] = readLengthDelimited(buf, pos);
@@ -286,8 +318,7 @@ function parseEpisodeDetails(buf: Buffer, skipImages = false): EpisodeDetails {
           if (!skipImages) result.thumbnail = tryDecodeBase64Jpeg(data);
           break;
         case 10:
-          // Episode backdrop: nested protobuf message (same structure as outer field 21)
-          // Inner field 1 = base64-encoded JPEG
+          // Episode backdrop: nested image message (same structure as outer field 21)
           if (!skipImages) result.backdrop = parseNestedImageMessage(data);
           break;
         // Fields 8 (MD5), 9 (JSON with episode TMDb data) – skip
@@ -325,9 +356,10 @@ export function parseVsMeta(buf: Buffer, options?: { skipImages?: boolean }): Vs
     contentType: 1,
     title: '',
     originalTitle: '',
-    tagline: '',
+    episodeTitle: '',
     year: 0,
     releaseDate: '',
+    locked: false,
     plot: '',
     tmdbId: '',
     imdbId: '',
@@ -349,11 +381,13 @@ export function parseVsMeta(buf: Buffer, options?: { skipImages?: boolean }): Vs
       pos = nextPos;
       switch (fieldNum) {
         case 1:
-          // Content type: 1=movie, 2=TV show
           result.contentType = (Number(val) === 2 ? 2 : 1);
           break;
         case 5:
           result.year = Number(val);
+          break;
+        case 7:
+          result.locked = val !== 0n;
           break;
         case 12:
           // Audience rating x10; MAX_UINT64 means "no rating"
@@ -373,7 +407,7 @@ export function parseVsMeta(buf: Buffer, options?: { skipImages?: boolean }): Vs
           try { result.originalTitle = data.toString('utf8'); } catch { /* ignore */ }
           break;
         case 4:
-          try { result.tagline = data.toString('utf8'); } catch { /* ignore */ }
+          try { result.episodeTitle = data.toString('utf8'); } catch { /* ignore */ }
           break;
         case 6:
           try { result.releaseDate = data.toString('utf8'); } catch { /* ignore */ }
@@ -406,7 +440,6 @@ export function parseVsMeta(buf: Buffer, options?: { skipImages?: boolean }): Vs
           break;
         }
         case 11:
-          // Content rating: "R", "PG-13", "TV-MA", etc.
           try { result.contentRating = data.toString('utf8'); } catch { /* ignore */ }
           break;
         case 17:
@@ -417,24 +450,33 @@ export function parseVsMeta(buf: Buffer, options?: { skipImages?: boolean }): Vs
           // MD5 hash of poster image – skip
           break;
         case 19: {
-          // TV episode details – large nested message
+          // TV episode details – nested message
           const ep = parseEpisodeDetails(data, skipImages);
           result.season      = ep.season;
           result.episode     = ep.episode;
           result.airDate     = ep.airDate;
           result.episodePlot = ep.plot;
-          if (ep.thumbnail) result.posterImage   = ep.thumbnail;
-          if (ep.backdrop)  result.backdropImage = ep.backdrop;
+          result.showLocked  = ep.locked;
+          if (ep.thumbnail)        result.posterImage      = ep.thumbnail;
+          if (ep.backdrop?.image)  result.backdropImage    = ep.backdrop.image;
+          if (ep.backdrop?.md5)    result.backdropMd5      = ep.backdrop.md5;
+          if (ep.backdrop?.timestamp !== undefined) result.backdropTimestamp = ep.backdrop.timestamp;
           // Fill outer fields from episode data when not already set
-          if (ep.year > 0 && result.year === 0)    result.year        = ep.year;
-          if (ep.airDate && !result.releaseDate)   result.releaseDate = ep.airDate;
-          if (ep.plot && !result.plot)             result.plot        = ep.plot;
+          if (ep.year > 0 && result.year === 0)  result.year        = ep.year;
+          if (ep.airDate && !result.releaseDate) result.releaseDate = ep.airDate;
+          if (ep.plot && !result.plot)           result.plot        = ep.plot;
           break;
         }
-        case 21:
-          // Movie backdrop/fanart: nested protobuf where inner field 1 = base64 JPEG
-          if (!skipImages) result.backdropImage = parseNestedImageMessage(data);
+        case 21: {
+          // Movie backdrop/fanart: nested image message
+          if (!skipImages) {
+            const bd = parseNestedImageMessage(data);
+            result.backdropImage     = bd.image;
+            result.backdropMd5       = bd.md5;
+            result.backdropTimestamp = bd.timestamp;
+          }
           break;
+        }
         // All other field numbers are silently ignored
       }
     } else if (wireType === WIRE_64BIT) {

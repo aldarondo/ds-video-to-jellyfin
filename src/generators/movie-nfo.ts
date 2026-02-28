@@ -26,7 +26,7 @@ export function generateMovieNfo(input: MovieNfoInput): string {
   xml += '<movie>\n';
   xml += elem('title', title);
   xml += elem('originaltitle', meta.originalTitle || title);
-  if (meta.tagline) xml += elem('tagline', meta.tagline);
+  if (meta.episodeTitle) xml += elem('tagline', meta.episodeTitle);
   if (year)         xml += elem('year', year);
   xml += elem('plot', meta.plot);
   if (meta.rating)  xml += elem('rating', meta.rating);
