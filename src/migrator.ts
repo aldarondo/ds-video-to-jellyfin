@@ -390,7 +390,24 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
 
   const showsWithNoYear = new Map<string, string>(); // title → example file path
   for (const { videoFile, vsmetaFile } of scanResults) {
-    const meta = (vsmetaFile ? parsedMetaCache.get(vsmetaFile) : undefined) ?? emptyMeta();
+    // Shallow-clone so we can safely mutate for folder-context inheritance below.
+    const meta = { ...((vsmetaFile ? parsedMetaCache.get(vsmetaFile) : undefined) ?? emptyMeta()) };
+
+    // Mirror the folder-context inheritance that processFile() applies before type
+    // detection: files without their own vsmeta (or with an untyped vsmeta) inherit
+    // the show title from siblings in the same folder that DO have a .vsmeta.
+    // Without this, a file like "SeaQuest/Season 2/ep-no-vsmeta.avi" would resolve
+    // its title from the folder path ("SeaQuest") rather than from the sibling vsmeta
+    // ("seaQuest DSV"), missing the year that sibling already contributed to
+    // showPremiereYears under the correct title.
+    if (meta.contentType !== 2 && meta.season == null && meta.episode == null) {
+      const folderCtx = folderContextMap.get(path.dirname(videoFile));
+      if (folderCtx?.isShow) {
+        if (folderCtx.showTitle) meta.title = folderCtx.showTitle;
+        meta.contentType = 2;
+      }
+    }
+
     if (detectMediaType(videoFile, meta, opts.type) !== 'show') continue;
 
     const nameWithoutExt = path.basename(videoFile, path.extname(videoFile));
@@ -398,7 +415,7 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
     const sourceShowName = inferShowName(videoFile, opts.input);
     const title          = resolveShowTitle(meta, sourceShowName, parsedTitle);
     if (!title) continue;
-    if (showPremiereYears.has(title)) continue; // year already known
+    if (showPremiereYears.has(title)) continue; // year already known (incl. from sibling vsmeta)
     if (showsWithNoYear.has(title)) continue;   // already noted
 
     const fileYear = parsedTitle.year || extractFolderYear(sourceShowName);
