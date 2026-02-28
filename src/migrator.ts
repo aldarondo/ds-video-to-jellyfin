@@ -56,6 +56,14 @@ export interface MigrateOptions {
   log: (msg: string) => void;
   /** Log function for warnings */
   warn: (msg: string) => void;
+  /**
+   * Called for each TV show whose year cannot be determined from filenames or
+   * .vsmeta data.  The implementation should display the question and return
+   * the raw user input (e.g. via readline).  An empty string or a non-numeric
+   * response means "skip — leave this show without a year".
+   * Omit to name shows without a detectable year using only the show title.
+   */
+  prompt?: (question: string) => Promise<string>;
 }
 
 export interface MigrateResult {
@@ -84,10 +92,28 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
   // once in total rather than three times.
   const vsmetaCount = scanResults.filter(r => r.vsmetaFile !== null).length;
   log(`Pre-scanning metadata... (${vsmetaCount} .vsmeta file(s))`);
-  const { parsedMetaCache, showPremiereYears, folderContextMap } =
+  const { parsedMetaCache, showPremiereYears, folderContextMap, showsWithNoYear } =
     await buildPreScanData(scanResults, opts);
   if (showPremiereYears.size > 0) {
     log(`Detected ${showPremiereYears.size} unique show(s) with year data.`);
+  }
+
+  // For shows where no year could be determined, ask the user before starting
+  // the main migration loop so migration runs without interactive interruptions.
+  if (opts.prompt && showsWithNoYear.size > 0) {
+    log(`\nCould not determine the year for ${showsWithNoYear.size} show(s).`);
+    for (const [showTitle, exampleFile] of showsWithNoYear) {
+      const exampleName = path.relative(input, exampleFile);
+      const answer = await opts.prompt(
+        `Year for "${showTitle}" (e.g. ${exampleName})\nEnter year or press Enter to skip: `
+      );
+      const parsed = parseInt(answer.trim(), 10);
+      if (!isNaN(parsed) && parsed >= 1900 && parsed <= 2100) {
+        showPremiereYears.set(showTitle, parsed);
+        log(`[info] Year ${parsed} assigned to "${showTitle}" (user-provided).`);
+      }
+    }
+    log('');
   }
 
   // Group files by their immediate top-level subfolder so we can log progress as
@@ -235,6 +261,12 @@ interface PreScanData {
   showPremiereYears: Map<string, number>;
   /** Show/season context per source directory, built from siblings that have .vsmeta */
   folderContextMap: Map<string, FolderContext>;
+  /**
+   * TV show titles for which no year could be determined from filenames, folder
+   * names, or .vsmeta data — maps normalised title → an example video file path.
+   * Used to prompt the user for a year before migration begins.
+   */
+  showsWithNoYear: Map<string, string>;
 }
 
 /**
@@ -337,7 +369,37 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
     if (ctx.isShow) folderContextMap.set(dir, ctx);
   }
 
-  return { parsedMetaCache, showPremiereYears, folderContextMap };
+  // --- Phase 3: find TV show titles that have no determinable year ---
+  // These are offered to the user for manual year entry when opts.prompt is set.
+  // A "no year" show is one whose title is absent from showPremiereYears AND for
+  // which the filename and source folder name contain no parseable year.
+  // The check mirrors what computeShowPaths() does at runtime:
+  //   fileYear = parsedTitle.year || year extracted from "(YYYY)" in sourceShowName
+  const extractParensYear = (name?: string): number | undefined => {
+    const m = name?.match(/\((\d{4})\)/);
+    return m ? parseInt(m[1], 10) : undefined;
+  };
+
+  const showsWithNoYear = new Map<string, string>(); // title → example file path
+  for (const { videoFile, vsmetaFile } of scanResults) {
+    const meta = (vsmetaFile ? parsedMetaCache.get(vsmetaFile) : undefined) ?? emptyMeta();
+    if (detectMediaType(videoFile, meta, opts.type) !== 'show') continue;
+
+    const nameWithoutExt = path.basename(videoFile, path.extname(videoFile));
+    const parsedTitle    = parseMovieFilename(nameWithoutExt);
+    const sourceShowName = inferShowName(videoFile, opts.input);
+    const title          = resolveShowTitle(meta, sourceShowName, parsedTitle);
+    if (!title) continue;
+    if (showPremiereYears.has(title)) continue; // year already known
+    if (showsWithNoYear.has(title)) continue;   // already noted
+
+    const fileYear = parsedTitle.year || extractParensYear(sourceShowName);
+    if (fileYear) continue; // file-path year will supply the year at runtime
+
+    showsWithNoYear.set(title, videoFile);
+  }
+
+  return { parsedMetaCache, showPremiereYears, folderContextMap, showsWithNoYear };
 }
 
 /**

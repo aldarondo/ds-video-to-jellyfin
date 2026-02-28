@@ -10,6 +10,7 @@
 import { Command } from 'commander';
 import path from 'path';
 import fs from 'fs';
+import readline from 'readline';
 import { migrate } from '../src/migrator.js';
 
 // __dirname is dist/bin/ after compilation, so package.json is two levels up
@@ -120,6 +121,18 @@ const warn = (msg: string) => {
   console.warn(msg);
 };
 
+// Lazily create a readline interface only if the user is actually prompted
+// (i.e. at least one show has no determinable year).  Creating it eagerly
+// would keep Node's event loop alive and delay process exit in the common
+// case where all shows already have year information.
+let rl: readline.Interface | undefined;
+const prompt = (question: string): Promise<string> => {
+  if (!rl) {
+    rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  }
+  return new Promise(resolve => rl!.question(question, resolve));
+};
+
 // Ensure output directory exists (unless dry-run)
 if (!options.dryRun) {
   fs.mkdirSync(outputPath, { recursive: true });
@@ -136,8 +149,10 @@ migrate({
   overwrite: options.overwrite ?? false,
   log,
   warn,
+  prompt,
 })
   .then((result) => {
+    rl?.close();
     console.log('\nDone.');
     console.log(`  Processed : ${result.processed}`);
     console.log(`  Skipped   : ${result.skipped}`);
@@ -151,6 +166,7 @@ migrate({
     process.exit(result.errors > 0 ? 1 : 0);
   })
   .catch((err: unknown) => {
+    rl?.close();
     console.error('Fatal error:', (err as Error).message);
     process.exit(1);
   });
