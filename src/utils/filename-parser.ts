@@ -3,11 +3,15 @@
  * when .vsmeta data is absent or incomplete.
  */
 
+import { parse } from 'parse-torrent-title';
+
 export interface ParsedEpisodeInfo {
   season: number;
   episode: number;
   /** Rest of filename after the S__E__ token, if any */
   episodeTitle?: string;
+  /** Extracted show title from parser, if available */
+  showTitle?: string;
 }
 
 export interface ParsedMovieInfo {
@@ -36,13 +40,20 @@ function normalizeWordSeparators(name: string): string {
  */
 export function parseEpisodeFilename(filename: string): ParsedEpisodeInfo | null {
   filename = normalizeWordSeparators(filename);
+
+  const parsed = parse(filename);
+  const showTitle = parsed.title || undefined;
+  const season = parsed.season;
+  const episode = parsed.episode;
+
   // SxxExx pattern (most common, e.g. S01E01)
   const sxex = filename.match(/[Ss](\d{1,2})[Ee](\d{1,3})(.*)/);
   if (sxex) {
     return {
-      season: parseInt(sxex[1], 10),
-      episode: parseInt(sxex[2], 10),
+      season: season ?? parseInt(sxex[1], 10),
+      episode: episode ?? parseInt(sxex[2], 10),
       episodeTitle: cleanTitle(sxex[3]),
+      showTitle,
     };
   }
 
@@ -50,22 +61,21 @@ export function parseEpisodeFilename(filename: string): ParsedEpisodeInfo | null
   const sdashed = filename.match(/[Ss](\d{1,2})\s*-\s*[Ee](\d{1,3})(.*)/);
   if (sdashed) {
     return {
-      season: parseInt(sdashed[1], 10),
-      episode: parseInt(sdashed[2], 10),
+      season: season ?? parseInt(sdashed[1], 10),
+      episode: episode ?? parseInt(sdashed[2], 10),
       episodeTitle: cleanTitle(sdashed[3]),
+      showTitle,
     };
   }
 
   // "-N-" or "- N -" standalone episode number (DS Video style without S/E markers).
-  // Used when content is stored with the episode number between dashes but no season prefix,
-  // e.g. "DoctorWho2006 -4- The Girl in the Fireplace" → episode 4.
-  // Season defaults to 1; the caller can override with the vsmeta season number.
   const standaloneEp = filename.match(/(?:^|\s)-\s*(\d{1,3})\s*-\s+(.*)/);
   if (standaloneEp) {
     return {
-      season:  1,
-      episode: parseInt(standaloneEp[1], 10),
+      season: season ?? 1,
+      episode: episode ?? parseInt(standaloneEp[1], 10),
       episodeTitle: cleanTitle(standaloneEp[2]),
+      showTitle,
     };
   }
 
@@ -73,9 +83,10 @@ export function parseEpisodeFilename(filename: string): ParsedEpisodeInfo | null
   const nxnn = filename.match(/(\d{1,2})x(\d{2,3})(.*)/i);
   if (nxnn) {
     return {
-      season: parseInt(nxnn[1], 10),
-      episode: parseInt(nxnn[2], 10),
+      season: season ?? parseInt(nxnn[1], 10),
+      episode: episode ?? parseInt(nxnn[2], 10),
       episodeTitle: cleanTitle(nxnn[3]),
+      showTitle,
     };
   }
 
@@ -83,9 +94,21 @@ export function parseEpisodeFilename(filename: string): ParsedEpisodeInfo | null
   const spelled = filename.match(/Season\s+(\d+)\s+Episode\s+(\d+)(.*)/i);
   if (spelled) {
     return {
-      season: parseInt(spelled[1], 10),
-      episode: parseInt(spelled[2], 10),
+      season: season ?? parseInt(spelled[1], 10),
+      episode: episode ?? parseInt(spelled[2], 10),
       episodeTitle: cleanTitle(spelled[3]),
+      showTitle,
+    };
+  }
+
+  if (season !== undefined && episode !== undefined) {
+    // We didn't hit any of our known title extraction regexes, but PTT found S/E.
+    // Return them with no episode title.
+    return {
+      season,
+      episode,
+      episodeTitle: undefined,
+      showTitle,
     };
   }
 
@@ -116,6 +139,18 @@ export function parseSeasonFolder(folderName: string): number | null {
  */
 export function parseMovieFilename(nameWithoutExt: string): ParsedMovieInfo {
   nameWithoutExt = normalizeWordSeparators(nameWithoutExt);
+
+  // Try parse-torrent-title first
+  const parsed = parse(nameWithoutExt);
+  if (parsed.title) {
+    // lib often extracts a good title and year
+    return {
+      title: parsed.title,
+      year: parsed.year,
+    };
+  }
+
+  // Fallback to original logic
 
   // "Title (Year)" — most reliable
   const parens = nameWithoutExt.match(/^(.+?)\s*\((\d{4})\)/);

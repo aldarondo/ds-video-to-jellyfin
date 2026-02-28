@@ -125,7 +125,7 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
 
   // Accumulate data for end-of-run CSV reports
   const showSeasonCounts = new Map<string, Map<number, ShowSeasonEntry>>();
-  const movieReport      = new Map<string, MovieReportRow>();
+  const movieReport = new Map<string, MovieReportRow>();
 
   const stats = { processed: 0, skipped: 0, errors: 0 };
 
@@ -202,14 +202,14 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
     const showsByTitle = new Map<string, string[]>();
     for (const showKey of showMetaMap.keys()) {
       const title = showKey.replace(/\s*\(\d{4}\)$/, '');
-      const arr   = showsByTitle.get(title) ?? [];
+      const arr = showsByTitle.get(title) ?? [];
       arr.push(showKey);
       showsByTitle.set(title, arr);
     }
     for (const [title, keys] of showsByTitle) {
       if (keys.length > 1) {
         log(`[info] "${title}" found with ${keys.length} premiere years — ` +
-            `treating as separate shows: ${keys.join(', ')}`);
+          `treating as separate shows: ${keys.join(', ')}`);
       }
     }
   }
@@ -220,15 +220,15 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
     if (showSeasonCounts.size > 0) {
       const showRows: ShowReportRow[] = [];
       for (const [showKey, seasonMap] of showSeasonCounts) {
-        const showName  = showKey.replace(/\s*\(\d{4}\)$/, '');
+        const showName = showKey.replace(/\s*\(\d{4}\)$/, '');
         const yearMatch = showKey.match(/\((\d{4})\)$/);
-        const year      = yearMatch ? parseInt(yearMatch[1], 10) : undefined;
+        const year = yearMatch ? parseInt(yearMatch[1], 10) : undefined;
         for (const [season, entry] of seasonMap) {
           showRows.push({
             name: showName,
             year,
             season,
-            episodes:  entry.count,
+            episodes: entry.count,
             sourceDir: entry.sourceDir,
             outputDir: entry.outputDir,
           });
@@ -333,9 +333,9 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
 
     if (vsmetaFile && isShow) {
       const nameWithoutExt = path.basename(videoFile, path.extname(videoFile));
-      const parsedTitle    = parseMovieFilename(nameWithoutExt);
+      const parsedTitle = parseMovieFilename(nameWithoutExt);
       const sourceShowName = inferShowName(videoFile, opts.input);
-      const title          = resolveShowTitle(meta, sourceShowName, parsedTitle);
+      const title = resolveShowTitle(meta, sourceShowName, parsedTitle);
       if (title) {
         const year =
           parsedTitle.year ||
@@ -433,9 +433,9 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
     if (detectMediaType(videoFile, meta, opts.type) !== 'show') continue;
 
     const nameWithoutExt = path.basename(videoFile, path.extname(videoFile));
-    const parsedTitle    = parseMovieFilename(nameWithoutExt);
+    const parsedTitle = parseMovieFilename(nameWithoutExt);
     const sourceShowName = inferShowName(videoFile, opts.input);
-    const title          = resolveShowTitle(meta, sourceShowName, parsedTitle);
+    const title = resolveShowTitle(meta, sourceShowName, parsedTitle);
     if (!title) continue;
     if (showPremiereYears.has(title)) continue; // year already known (incl. from sibling vsmeta)
     if (showsWithNoYear.has(title)) continue;   // already noted
@@ -460,10 +460,10 @@ function groupByTopLevelFolder(
 ): Map<string, ScanResult[]> {
   const groups = new Map<string, ScanResult[]>();
   for (const item of scanResults) {
-    const rel      = path.relative(inputRoot, item.videoFile);
-    const sepIdx   = rel.indexOf(path.sep);
+    const rel = path.relative(inputRoot, item.videoFile);
+    const sepIdx = rel.indexOf(path.sep);
     const groupKey = sepIdx === -1 ? '' : rel.slice(0, sepIdx);
-    const arr      = groups.get(groupKey) ?? [];
+    const arr = groups.get(groupKey) ?? [];
     arr.push(item);
     groups.set(groupKey, arr);
   }
@@ -529,8 +529,8 @@ function processFile({
   // Parse filename first — we need parsedEpisode before applying folder context so we
   // can decide whether to inherit the season number from siblings.
   const nameWithoutExt = path.basename(videoFile, path.extname(videoFile));
-  const parsedEpisode  = parseEpisodeFilename(nameWithoutExt);
-  const parsedTitle    = parseMovieFilename(nameWithoutExt);
+  const parsedEpisode = parseEpisodeFilename(nameWithoutExt);
+  const parsedTitle = parseMovieFilename(nameWithoutExt);
 
   // For files that are not positively identified as TV show episodes by their own
   // vsmeta, inherit key fields from sibling episodes in the same folder that DO have
@@ -610,6 +610,12 @@ function processFile({
     // Infer show name from the source folder structure if possible
     const sourceShowName = inferShowName(videoFile, opts.input);
 
+    // If vsmeta didn't provide a show title, use the one from the filename parser
+    if (!meta.title && parsedEpisode?.showTitle) {
+      meta.title = parsedEpisode.showTitle;
+      meta.contentType = 2; // Ensure it is treated as a TV show title by resolveShowTitle
+    }
+
     // Look up the pre-computed premiere year for this show
     const showTitleKey = resolveShowTitle(meta, sourceShowName, parsedTitle);
     const premiereYear = showPremiereYears.get(showTitleKey);
@@ -631,8 +637,8 @@ function processFile({
     // preserved.  The season/episode machinery (clamping, NFO, CSV tracking) is
     // bypassed entirely — extras are supplementary content, not episodes.
     if (parsedEpisode === null && isExtrasFile(nameWithoutExt)) {
-      const extrasFolder    = path.join(paths.showFolder, 'Extras');
-      const origBasename    = path.basename(videoFile);
+      const extrasFolder = path.join(paths.showFolder, 'Extras');
+      const origBasename = path.basename(videoFile);
       const extrasVideoFile = path.join(extrasFolder, origBasename);
 
       log(`  [extra] ${origBasename} → "${paths.showKey}" Extras/`);
@@ -655,7 +661,7 @@ function processFile({
       // the show folder contains only extras (no regular episodes).
       if (!showMetaMap.has(paths.showKey)) {
         const showTitle = paths.showKey.replace(/\s*\(\d{4}\)$/, '');
-        const yearStr   = paths.showKey.match(/\((\d{4})\)$/)?.[1];
+        const yearStr = paths.showKey.match(/\((\d{4})\)$/)?.[1];
         showMetaMap.set(paths.showKey, {
           showTitle,
           year: yearStr ? parseInt(yearStr, 10) : undefined,
@@ -666,7 +672,7 @@ function processFile({
 
       // Extract show artwork (poster/fanart) if not already present
       if (!noImages) {
-        const posterPath    = path.join(paths.showFolder, 'poster.jpg');
+        const posterPath = path.join(paths.showFolder, 'poster.jpg');
         const showHasPoster = fs.existsSync(posterPath) ||
           (effectiveWetRun && fs.existsSync(posterPath + '.txt'));
         if (!showHasPoster || overwrite) {
@@ -713,7 +719,7 @@ function processFile({
         `(source: ${originalSource}) — placing in Season 00.`);
     }
 
-    const seNum     = `S${formatSeason(paths.season)}E${formatEpisode(paths.episode)}`;
+    const seNum = `S${formatSeason(paths.season)}E${formatEpisode(paths.episode)}`;
     const inferNote = inferredFromFolder ? ' [no .vsmeta — folder-inferred]' : '';
     log(`  [show]  ${path.basename(videoFile)} → "${paths.showKey}" ${seNum} [${paths.numberSource}]${inferNote}`);
     if (dryRun) return 'ok';
@@ -727,12 +733,12 @@ function processFile({
     // recording the source/output directories from the first episode seen.
     {
       const seasonMap = showSeasonCounts.get(paths.showKey) ?? new Map<number, ShowSeasonEntry>();
-      const existing  = seasonMap.get(paths.season);
+      const existing = seasonMap.get(paths.season);
       if (existing) {
         existing.count++;
       } else {
         seasonMap.set(paths.season, {
-          count:     1,
+          count: 1,
           sourceDir: path.dirname(videoFile),
           outputDir: paths.seasonFolder,
         });
@@ -778,7 +784,7 @@ function processFile({
     // Re-read .vsmeta for image data (pre-scan cache skips images to save RAM).
     // Pass overwrite so extractImages respects the same flag as .nfo writes.
     if (!noImages) {
-      const posterPath    = path.join(paths.showFolder, 'poster.jpg');
+      const posterPath = path.join(paths.showFolder, 'poster.jpg');
       const showHasPoster = fs.existsSync(posterPath) ||
         (effectiveWetRun && fs.existsSync(posterPath + '.txt'));
       if (!showHasPoster || overwrite) {
