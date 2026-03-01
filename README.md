@@ -2,19 +2,21 @@
 
 A Node.js CLI tool (and library) that reorganizes a [Synology DS Video](https://www.synology.com/en-us/dsm/packages/VideoStation) collection into a [Jellyfin](https://jellyfin.org)-compatible folder structure — while **keeping DS Video fully functional** throughout the transition.
 
+> **Note:** The core parsing and organization modules of this project are backed by **100% unit test coverage** to ensure a safe, robust, and reliable media migration experience.
+
 ## How it works
 
 DS Video stores metadata in proprietary binary `.vsmeta` files alongside each video. Jellyfin expects a specific folder layout and Kodi-standard `.nfo` XML files.
 
 This tool:
 
-1. **Scans** your DS Video library recursively for video files
-2. **Parses** adjacent `.vsmeta` files to extract metadata (title, plot, genres, cast, artwork, etc.)
-3. **Auto-detects** whether each file is a movie or a TV show episode
-4. **Reorganizes** files into the Jellyfin folder structure
-5. **Generates `.nfo` files** (Jellyfin reads these)
-6. **Preserves `.vsmeta` files** alongside the video (DS Video keeps reading these)
-7. **Extracts artwork** (poster.jpg, fanart.jpg) from the `.vsmeta` embedded images
+1. **Scans** your DS Video library recursively for video files.
+2. **Parses** adjacent `.vsmeta` files using `vsmeta-parser`.
+3. **Auto-detects** media type using metadata and **path-aware** patterns from `parse-torrent-path`.
+4. **Reorganizes** files into the Jellyfin folder structure.
+5. **Generates `.nfo` files** using `vsmeta-to-nfo`.
+6. **Preserves `.vsmeta` files** alongside the video.
+7. **Extracts artwork** using `vsmeta-to-jpeg`.
 
 The result is a folder structure that works with **both** DS Video and Jellyfin simultaneously.
 
@@ -130,10 +132,8 @@ await migrate({
 });
 ```
 
-You can also import individual utilities:
-
 ```typescript
-import { parseVsMeta } from 'ds-video-to-jellyfin';
+import { parseVsMeta } from 'vsmeta-parser';
 import { readFileSync } from 'fs';
 
 const meta = parseVsMeta(readFileSync('myvideo.mkv.vsmeta'));
@@ -147,7 +147,7 @@ The tool handles various DS Video folder layouts:
 ```
 /library/Movie Title (2020).mkv
 /library/Movies/Movie Title (2020)/movie.mkv
-/library/TV/Show Name/Season 1/S01E01.mkv
+/library/TV/Show Name (2020)/Season 1/S01E01.mkv
 /library/TV/Show Name/1x01 Episode Title.mkv
 /library/TV/Show Name/Season 1 Episode 1.mkv
 ```
@@ -159,7 +159,7 @@ Each file is classified in priority order:
 | # | Signal | Example |
 |---|--------|---------|
 | 1 | `.vsmeta` content type / season+episode fields | content type = 2 → show |
-| 2 | Filename episode pattern | `S01E03`, `1x03` → show |
+| 2 | **Path-aware** filename episode pattern | `Season 01/ep1.mkv` → show |
 | 3 | Ancestor folder is a season folder | `Season 1/`, `S01/` → show |
 | 4 | Ancestor folder name contains **"show"** or **"movie"** (case-insensitive) | `TV Shows/` → show · `Movies/` → movie |
 | 5 | Default | → movie |
@@ -183,60 +183,30 @@ Artwork is sourced from:
 1. Embedded JPEG images in the `.vsmeta` file (poster, backdrop, thumbnail)
 2. Synology `@eaDir` thumbnail cache alongside the source file
 
-## Migration reports (CSV)
+## Migration report (JSON)
 
-After every real or wet run, two CSV files are written to the **output root directory**:
+After every real or wet run, a consolidated JSON report is written to the **output root directory**: `migration-report.json`.
 
-| File | Contents |
-|------|----------|
-| `migration-shows.csv` | One row per TV show season |
-| `migration-movies.csv` | One row per movie |
-
-> CSV files are **not** produced during `--dry-run` (no files are written in that mode).
-
-### `migration-shows.csv`
-
-| Column | Description |
-|--------|-------------|
-| Name | Show title (without year) |
-| Year | Premiere year |
-| Season | Season number — `0` means Season 00 / Specials |
-| Episodes | Number of episode files written in this season |
-| Source Directory | Folder the source episode files came from |
-| Output Directory | Output season folder the files were placed in |
-
-```
-Name,Year,Season,Episodes,Source Directory,Output Directory
-Breaking Bad,2008,1,7,V:\Video\TV\Breaking Bad\Season 1,V:\Output\Breaking Bad (2008)\Season 01
-Breaking Bad,2008,2,13,V:\Video\TV\Breaking Bad\Season 2,V:\Output\Breaking Bad (2008)\Season 02
-Looney Tunes Cartoons,2009,0,156,V:\Video\TV\Looney Tunes,V:\Output\Looney Tunes Cartoons (2009)\Season 00
-```
-
-### `migration-movies.csv`
-
-| Column | Description |
-|--------|-------------|
-| Name | Movie title |
-| Year | Release year |
-| Source Path | Full path to the source video file |
-| Output Path | Full path to the output video file |
-
-```
-Name,Year,Source Path,Output Path
-Inception,2010,V:\Video\Movies\Inception (2010).mkv,V:\Output\Inception (2010)\Inception (2010).mkv
-The Dark Knight,2008,V:\Video\Movies\The Dark Knight.mkv,V:\Output\The Dark Knight (2008)\The Dark Knight (2008).mkv
-```
-
-Use these files to cross-check the migration against your source library — sort by episode count to spot seasons with an unexpected number of files, filter by source directory to verify a specific folder was fully processed, or diff two CSV snapshots to see what changed between runs. Each file is overwritten on every run so it always reflects the most recent migration.
+This report is generated by `nfo-to-json` and contains structured data for all migrated movies and TV shows, enabling easy programmatic verification or integration with other tools.
 
 ## Development
 
 ```bash
+# Clone the repository
 git clone https://github.com/aldarondo/ds-video-to-jellyfin
 cd ds-video-to-jellyfin
+
+# Install dependencies
 npm install
+
+# Build the project (using tsup)
 npm run build
+
+# Run tests (using vitest)
 npm test
+
+# Run the CLI from source (using tsx)
+npx tsx src/cli.ts --help
 ```
 
 ## License

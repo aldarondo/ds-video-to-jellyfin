@@ -14,14 +14,15 @@
  */
 
 import path from 'path';
-import { VsMetaData } from '../parsers/vsmeta.js';
+import { VsMetaData } from 'vsmeta-parser';
 import {
-  ParsedEpisodeInfo,
-  ParsedMovieInfo,
+  ParsedInfo,
+  parsePath,
+} from 'parse-torrent-path';
+import {
   formatSeason,
   formatEpisode,
   sanitizePathComponent,
-  parseMovieFilename,
 } from '../utils/filename-parser.js';
 
 export interface ShowPaths {
@@ -54,14 +55,16 @@ export interface ShowPaths {
 export function resolveShowTitle(
   meta: VsMetaData,
   sourceShowName: string | undefined,
-  parsedTitle: ParsedMovieInfo
+  parsedTitle: ParsedInfo
 ): string {
   // Use `|| undefined` instead of plain ternary so that an empty meta.title ("")
   // doesn't win over the sourceShowName / parsedTitle fallbacks via `??`.
   return sanitizePathComponent(
     (meta.contentType === 2 ? meta.title || undefined : undefined) ??
     stripYearFromName(sourceShowName) ??
-    parsedTitle.title
+    parsedTitle.showTitle ??
+    parsedTitle.title ??
+    ''
   );
 }
 
@@ -72,8 +75,8 @@ export function computeShowPaths(
   outputRoot: string,
   sourceFile: string,
   meta: VsMetaData,
-  parsedEpisode: ParsedEpisodeInfo | null,
-  parsedTitle: ParsedMovieInfo,
+  parsedEpisode: ParsedInfo | null,
+  parsedTitle: ParsedInfo,
   /** Show folder name/year derived from source folder structure */
   sourceShowName?: string,
   /**
@@ -88,20 +91,8 @@ export function computeShowPaths(
   const showTitle = resolveShowTitle(meta, sourceShowName, parsedTitle);
 
   // Determine show year for folder naming.
-  // Priority:
-  //   1. premiereYear — pre-computed minimum year across all episodes of this show
-  //   2. parsedTitle.year — year embedded in the source filename (reliable)
-  //   3. year in source folder or parent folders (e.g. "My Show (2020)" or parent
-  //      "ShowName 1974-1978/DiscFolder/")
-  // We intentionally skip raw meta.year / meta.releaseDate here because for TV
-  // shows those fields hold the individual EPISODE air date, not the premiere year.
-  // File-path year (from the filename or source folder name) takes priority over
-  // the vsmeta-derived premiere year.  When the same show title spans multiple
-  // eras (e.g. "Doctor Who (1963)" vs "Doctor Who (2005)"), the year embedded in
-  // the filename or its parent folder is the most reliable era discriminator —
-  // vsmeta data can be incorrectly tagged across different versions of a show.
-  const fileYear  = parsedTitle.year || extractYearFromPath(sourceFile, sourceShowName);
-  const showYear  = fileYear || premiereYear;
+  const fileYear = parsedTitle.year || extractYearFromPath(sourceFile, sourceShowName);
+  const showYear = fileYear || premiereYear;
 
   const showFolderName = showYear ? `${showTitle} (${showYear})` : showTitle;
 
@@ -110,24 +101,21 @@ export function computeShowPaths(
   let season: number;
   let episode: number;
   if (meta.season != null || meta.episode != null) {
-    season = meta.season ?? 1;
+    season = meta.season ?? parsedEpisode?.season ?? 1;
     // Prefer the episode number from the filename when parsedEpisode is available.
-    // Filenames (as curated by the user) are more reliable for episode ordering
-    // than vsmeta data that can be incorrectly tagged (e.g. multiple episodes all
-    // marked E01 in vsmeta when the filename clearly has -2-, -4-, etc.).
-    if (parsedEpisode !== null) {
-      episode      = parsedEpisode.episode;
+    if (parsedEpisode !== null && parsedEpisode.episode !== undefined) {
+      episode = parsedEpisode.episode;
       numberSource = 'filename';
     } else {
-      episode      = meta.episode ?? 1;
+      episode = meta.episode ?? 1;
       numberSource = 'vsmeta';
     }
-  } else if (parsedEpisode != null) {
-    season  = parsedEpisode.season;
+  } else if (parsedEpisode != null && parsedEpisode.episode !== undefined) {
+    season = parsedEpisode.season ?? 1;
     episode = parsedEpisode.episode;
     numberSource = 'filename';
   } else {
-    season  = 1;
+    season = 1;
     episode = 1;
     numberSource = 'default';
   }
@@ -135,7 +123,8 @@ export function computeShowPaths(
 
   // Episode filename: "Show Name S01E01 Episode Title.ext"
   // For TV shows meta.title = show title, so episode title only comes from filename parsing
-  const episodeTitle = sanitizePathComponent(parsedEpisode?.episodeTitle ?? '');
+  const episodeTitleText = parsedEpisode?.episodeTitle ?? '';
+  const episodeTitle = sanitizePathComponent(Array.isArray(episodeTitleText) ? episodeTitleText.join(' ') : episodeTitleText);
   const episodePart = episodeTitle
     ? `${showTitle} S${formatSeason(season)}E${formatEpisode(episode)} ${episodeTitle}`
     : `${showTitle} S${formatSeason(season)}E${formatEpisode(episode)}`;
@@ -168,18 +157,20 @@ const YEAR_MAX = 2100;
  * Extract a 4-digit year from a folder/show name, trying several formats:
  *   1. Parenthesised suffix — "My Show (2020)"   (most unambiguous, checked first)
  *   2. Space/dot/embedded — "Seinfeld 1989", "Breaking.Bad.2008", "ShowName2006"
- *      (via parseMovieFilename, with range guard to exclude show titles like "The 4400")
+ *      (via parsePath, with range guard to exclude show titles like "The 4400")
  * Returns undefined if no plausible year is found.
  */
-function extractYearFromName(name?: string): number | undefined {
-  if (!name) return undefined;
+function extractYearFromName(nameOrPath?: string): number | undefined {
+  if (!nameOrPath) return undefined;
 
-  // "(YYYY)" is explicit and unambiguous.
-  const parens = name.match(/\((\d{4})\)/);
+  // "(YYYY)" is explicit and unambiguous — check the basename first
+  const filename = path.basename(nameOrPath);
+  const parens = filename.match(/\((\d{4})\)/);
   if (parens) return parseInt(parens[1], 10);
 
   // Fall back to filename-style parsing for "ShowName YYYY", "Show.Name.YYYY", etc.
-  const parsed = parseMovieFilename(name);
+  // parsePath is now path-aware.
+  const parsed = parsePath(nameOrPath);
   if (parsed.year && parsed.year >= YEAR_MIN && parsed.year <= YEAR_MAX) {
     return parsed.year;
   }

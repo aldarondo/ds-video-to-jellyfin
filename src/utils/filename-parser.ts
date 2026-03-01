@@ -1,185 +1,66 @@
-/**
- * Utility functions for parsing metadata from filenames and folder paths
- * when .vsmeta data is absent or incomplete.
- */
+import { parsePath, ParsedInfo } from 'parse-torrent-path';
 
-import { parse } from 'parse-torrent-title';
-
-export interface ParsedEpisodeInfo {
-  season: number;
-  episode: number;
-  /** Rest of filename after the S__E__ token, if any */
-  episodeTitle?: string;
-  /** Extracted show title from parser, if available */
-  showTitle?: string;
-}
-
-export interface ParsedMovieInfo {
-  title: string;
-  year?: number;
-}
+export type ParsedEpisodeInfo = ParsedInfo;
+export type ParsedMovieInfo = ParsedInfo;
 
 /**
- * Normalize a filename by replacing underscores or dots with spaces when the name
- * contains no spaces at all.  Encoders and rippers commonly use either character as
- * a word separator (e.g. "Dark_Angel_S01E01_Pilot" or "Dark.Angel.S01E01.Pilot").
- * Names that already contain spaces are returned unchanged to avoid corrupting
- * titles that legitimately mix separators (e.g. "some_tag episode title").
+ * Extract season and episode numbers from a file path.
  */
-function normalizeWordSeparators(name: string): string {
-  return name.includes(' ') ? name : name.replace(/[_.]/g, ' ');
-}
-
-/**
- * Extract season and episode numbers from a filename.
- * Supports common patterns:
- *   S01E01, S1E1, s01e01           → season 1, ep 1
- *   S1 - E01, S1 - E01 - Title     → season 1, ep 1  (DS Video space-separated style)
- *   1x01, 01x01                    → season 1, ep 1
- *   Season 1 Episode 1             → season 1, ep 1
- */
-export function parseEpisodeFilename(filename: string): ParsedEpisodeInfo | null {
-  filename = normalizeWordSeparators(filename);
-
-  const parsed = parse(filename);
-  const showTitle = parsed.title || undefined;
-  const season = parsed.season;
-  const episode = parsed.episode;
-
-  // SxxExx pattern (most common, e.g. S01E01)
-  const sxex = filename.match(/[Ss](\d{1,2})[Ee](\d{1,3})(.*)/);
-  if (sxex) {
-    return {
-      season: season ?? parseInt(sxex[1], 10),
-      episode: episode ?? parseInt(sxex[2], 10),
-      episodeTitle: cleanTitle(sxex[3]),
-      showTitle,
-    };
+export function parseEpisodeFilename(filePath: string): ParsedEpisodeInfo | null {
+  const result = parsePath(filePath);
+  if (result.episode !== undefined) {
+    if (result.episodeTitle) {
+      return { ...result, episodeTitle: cleanTitle(result.episodeTitle) };
+    }
+    return result;
   }
 
-  // "S1 - E01" space/dash separated (DS Video style, e.g. "S1 - E01 - Pilot")
-  const sdashed = filename.match(/[Ss](\d{1,2})\s*-\s*[Ee](\d{1,3})(.*)/);
-  if (sdashed) {
-    return {
-      season: season ?? parseInt(sdashed[1], 10),
-      episode: episode ?? parseInt(sdashed[2], 10),
-      episodeTitle: cleanTitle(sdashed[3]),
-      showTitle,
-    };
-  }
-
-  // "-N-" or "- N -" standalone episode number (DS Video style without S/E markers).
-  const standaloneEp = filename.match(/(?:^|\s)-\s*(\d{1,3})\s*-\s+(.*)/);
-  if (standaloneEp) {
-    return {
-      season: season ?? 1,
-      episode: episode ?? parseInt(standaloneEp[1], 10),
-      episodeTitle: cleanTitle(standaloneEp[2]),
-      showTitle,
-    };
-  }
-
-  // NxNN pattern (e.g. 1x01)
-  const nxnn = filename.match(/(\d{1,2})x(\d{2,3})(.*)/i);
-  if (nxnn) {
-    return {
-      season: season ?? parseInt(nxnn[1], 10),
-      episode: episode ?? parseInt(nxnn[2], 10),
-      episodeTitle: cleanTitle(nxnn[3]),
-      showTitle,
-    };
-  }
-
-  // "Season N Episode N" spelled out
-  const spelled = filename.match(/Season\s+(\d+)\s+Episode\s+(\d+)(.*)/i);
-  if (spelled) {
-    return {
-      season: season ?? parseInt(spelled[1], 10),
-      episode: episode ?? parseInt(spelled[2], 10),
-      episodeTitle: cleanTitle(spelled[3]),
-      showTitle,
-    };
-  }
-
-  if (season !== undefined && episode !== undefined) {
-    // We didn't hit any of our known title extraction regexes, but PTT found S/E.
-    // Return them with no episode title.
-    return {
-      season,
-      episode,
-      episodeTitle: undefined,
-      showTitle,
-    };
+  // Fallback for DS Video "-N-" standalone episode pattern - usually in basename
+  const filename = filePath.split(/[\\/]/).pop() || filePath;
+  const standaloneMatch = filename.match(/(?:^|[\s._-])-?\s*(\d{1,3})\s*-?(?:[\s._-]|$)/);
+  if (standaloneMatch) {
+    const episode = parseInt(standaloneMatch[1], 10);
+    // Try to extract title after the pattern
+    const rest = filename.substring(standaloneMatch.index! + standaloneMatch[0].length);
+    const episodeTitle = cleanTitle(rest);
+    return { ...result, episode, episodeTitle };
   }
 
   return null;
 }
 
 /**
- * Extract season number from a folder name.
- * Supports: "Season 01", "Season 1", "S01", "s1"
+ * Extract season number from a folder or file path.
  */
-export function parseSeasonFolder(folderName: string): number | null {
-  const full = folderName.match(/^Season\s+(\d+)$/i);
-  if (full) return parseInt(full[1], 10);
+export function parseSeasonFolder(filePath: string): number | null {
+  const result = parsePath(filePath);
+  if (result.season !== undefined) return result.season;
 
-  const short = folderName.match(/^[Ss](\d{1,2})$/);
-  if (short) return parseInt(short[1], 10);
-
-  return null;
+  // Minimal fallback for "Season N" or "SN" - check the relevant path component
+  const name = filePath.split(/[\\/]/).pop() || filePath;
+  const m = name.match(/^(?:Season\s+|S)([0-9]{1,2})$/i);
+  return m ? parseInt(m[1], 10) : null;
 }
 
 /**
- * Extract title and year from a movie filename or folder name.
- * Supports:
- *   "Movie Title (2020)"
- *   "Movie.Title.2020"
- *   "Movie Title 2020"
- *   "Movie Title"
+ * Extract title and year from a movie file path.
  */
-export function parseMovieFilename(nameWithoutExt: string): ParsedMovieInfo {
-  nameWithoutExt = normalizeWordSeparators(nameWithoutExt);
+export function parseMovieFilename(filePath: string): ParsedMovieInfo {
+  const result = parsePath(filePath);
 
-  // Try parse-torrent-title first
-  const parsed = parse(nameWithoutExt);
-  if (parsed.title) {
-    // lib often extracts a good title and year
-    return {
-      title: parsed.title,
-      year: parsed.year,
-    };
-  }
-
-  // Fallback to original logic
-
-  // "Title (Year)" — most reliable
-  const parens = nameWithoutExt.match(/^(.+?)\s*\((\d{4})\)/);
-  if (parens) {
-    return { title: parens[1].trim(), year: parseInt(parens[2], 10) };
-  }
-
-  // "Title.Year.extra" or "Title Year" — dot/space separated
-  const dotYear = nameWithoutExt.match(/^(.+?)[\s.](\d{4})(?:[\s.]|$)/);
-  if (dotYear) {
-    const title = dotYear[1].replace(/\./g, ' ').trim();
-    return { title, year: parseInt(dotYear[2], 10) };
-  }
-
-  // Year appended directly to the end of a word without a separator: "ShowName2006".
-  // DS Video sometimes encodes the broadcast year into the filename this way,
-  // e.g. "DoctorWho2006 -4- The Girl in the Fireplace" → title "DoctorWho", year 2006.
-  // Requires a non-digit immediately before the year and a word-boundary after
-  // (whitespace, dash, underscore, or end of string).
-  const embedded = nameWithoutExt.match(/^(.*\D)(\d{4})(?=\s|[-_]|$)/);
-  if (embedded) {
-    const year = parseInt(embedded[2], 10);
-    if (year >= 1900 && year <= 2030) {
-      return { title: embedded[1].replace(/\./g, ' ').trim(), year };
+  // Fallback for mashed years like "DoctorWho2006" - usually in basename
+  if (result.year === undefined || Number.isNaN(result.year)) {
+    const filename = filePath.split(/[\\/]/).pop() || filePath;
+    const mashedYear = filename.match(/([a-zA-Z]+)(\d{4})\b/);
+    if (mashedYear) {
+      const year = parseInt(mashedYear[2], 10);
+      if (year >= 1900 && year <= 2100) {
+        return { ...result, title: mashedYear[1], year };
+      }
     }
   }
 
-  // No year found — use whole name as title
-  return { title: nameWithoutExt.replace(/\./g, ' ').trim() };
+  return result;
 }
 
 /**
@@ -249,9 +130,13 @@ export function isExtrasFile(nameWithoutExt: string): boolean {
 
 // Strip leading separators and media extensions from the remainder after SxxExx
 function cleanTitle(rest: string): string | undefined {
-  const cleaned = rest
-    .replace(/^[\s._-]+/, '') // leading separators
+  let cleaned = rest
+    .replace(/^[\s\._-]+/, '') // leading separators
     .replace(/\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts|webm)$/i, '') // extensions
     .trim();
+
+  if (!cleaned.includes(' ') && cleaned.match(/[._]/)) {
+    cleaned = cleaned.replace(/[._]+/g, ' ').trim();
+  }
   return cleaned || undefined;
 }

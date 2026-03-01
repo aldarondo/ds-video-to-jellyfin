@@ -12,8 +12,9 @@
  */
 
 import path from 'path';
-import { VsMetaData } from '../parsers/vsmeta.js';
-import { ParsedMovieInfo, sanitizePathComponent } from '../utils/filename-parser.js';
+import { VsMetaData } from 'vsmeta-parser';
+import { ParsedInfo } from 'parse-torrent-path';
+import { sanitizePathComponent } from '../utils/filename-parser.js';
 
 export interface MoviePaths {
   /** Absolute path to the output movie folder */
@@ -38,9 +39,9 @@ export function computeMoviePaths(
   outputRoot: string,
   sourceFile: string,
   meta: VsMetaData,
-  parsed: ParsedMovieInfo
+  parsed: ParsedInfo
 ): MoviePaths {
-  const title = sanitizePathComponent(meta.title || parsed.title);
+  const title = sanitizePathComponent(meta.title || parsed.title || '');
   const year =
     meta.year ||
     parsed.year ||

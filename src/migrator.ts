@@ -6,29 +6,22 @@
 import fs from 'fs';
 import path from 'path';
 
-import { parseVsMeta, VsMetaData } from './parsers/vsmeta.js';
+import { parseVsMeta, VsMetaData } from 'vsmeta-parser';
+import { parsePath } from 'parse-torrent-path';
+import { crawlDir, parseNfo, buildMoviesJson, buildTvShowsJson, ParsedNfo } from 'nfo-to-json';
+import { convertVsMetaToJpeg } from 'vsmeta-to-jpeg';
+import { convertVsMetaToNfo } from 'vsmeta-to-nfo';
+
 import { detectMediaType } from './detectors/media-type.js';
 import {
-  parseEpisodeFilename,
-  parseMovieFilename,
   extractYear,
   formatSeason,
   formatEpisode,
   isExtrasFile,
 } from './utils/filename-parser.js';
 import { scanDirectory, ScanResult } from './utils/scanner.js';
-import { extractImages } from './utils/image-extractor.js';
-import { generateMovieNfo } from './generators/movie-nfo.js';
-import { generateShowNfo, ShowNfoInput, mergeShowMeta } from './generators/show-nfo.js';
-import { generateEpisodeNfo } from './generators/episode-nfo.js';
 import { computeMoviePaths } from './organizers/movie-organizer.js';
 import { computeShowPaths, resolveShowTitle } from './organizers/show-organizer.js';
-import {
-  generateShowCsv,
-  generateMovieCsv,
-  ShowReportRow,
-  MovieReportRow,
-} from './generators/csv-report.js';
 
 export interface MigrateOptions {
   /** Source directory to scan */
@@ -76,8 +69,7 @@ export interface MigrateResult {
  * Run the full migration from a DS Video folder structure to a Jellyfin-compatible layout.
  */
 export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
-  const { input, output, dryRun, wetRun, log, warn } = opts;
-
+  const { input, output, dryRun, log, warn } = opts;
   log(`Scanning ${input}...`);
   const scanResults = scanDirectory(input);
   log(`Found ${scanResults.length} video file(s).`);
@@ -121,11 +113,8 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
   const groups = groupByTopLevelFolder(scanResults, input);
 
   // Accumulate show-level metadata across all episodes keyed by show folder name
-  const showMetaMap = new Map<string, ShowNfoInput>();
-
-  // Accumulate data for end-of-run CSV reports
-  const showSeasonCounts = new Map<string, Map<number, ShowSeasonEntry>>();
-  const movieReport = new Map<string, MovieReportRow>();
+  // Note: We still need this to know where to put tvshow.nfo and to prompt for years
+  const showMetaMap = new Map<string, { showTitle: string; year?: number; _nfoPath: string }>();
 
   const stats = { processed: 0, skipped: 0, errors: 0 };
 
@@ -146,8 +135,6 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
           showPremiereYears,
           folderContextMap,
           parsedMetaCache,
-          showSeasonCounts,
-          movieReport,
         });
 
         if (result === 'skipped') {
@@ -172,78 +159,25 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
     }
   }
 
-  // Write tvshow.nfo for each discovered show
-  for (const [showKey, showInput] of showMetaMap) {
-    const showNfoPath = (showInput as ShowNfoInput & { _nfoPath: string })._nfoPath;
-    if (!showNfoPath) continue;
-
-    // mergeShowMeta may have set showInput.year from an individual episode's air date
-    // rather than the show's actual premiere year.  Overwrite with the pre-computed
-    // premiere year (minimum year seen across all episodes of this show), which is
-    // the same value already used to name the show folder.
-    const premiereYear = showPremiereYears.get(showInput.showTitle);
-    if (premiereYear) showInput.year = premiereYear;
-
-    if (!dryRun) {
-      ensureDir(path.dirname(showNfoPath));
-      if (opts.overwrite || !fs.existsSync(showNfoPath)) {
-        fs.writeFileSync(showNfoPath, generateShowNfo(showInput), 'utf8');
-      }
-    }
-    // (tvshow.nfo is a generated file so it's always written in wet-run too)
-    log(`  [show nfo] ${showKey} → ${showNfoPath}`);
-  }
-
-  // Detect and report shows whose title appears with multiple premiere years.
-  // This surfaces cases like "Doctor Who (1963)" and "Doctor Who (2006)" in the
-  // same output tree — different eras of the same show treated as separate series.
-  // Grouping is by the title portion only (everything before the trailing "(YYYY)").
-  {
-    const showsByTitle = new Map<string, string[]>();
-    for (const showKey of showMetaMap.keys()) {
-      const title = showKey.replace(/\s*\(\d{4}\)$/, '');
-      const arr = showsByTitle.get(title) ?? [];
-      arr.push(showKey);
-      showsByTitle.set(title, arr);
-    }
-    for (const [title, keys] of showsByTitle) {
-      if (keys.length > 1) {
-        log(`[info] "${title}" found with ${keys.length} premiere years — ` +
-          `treating as separate shows: ${keys.join(', ')}`);
-      }
-    }
-  }
-
-  // Write CSV migration reports (skipped in dry-run: no files were actually written)
+  // Write JSON report (skipped in dry-run)
   if (!dryRun) {
-    // --- Shows CSV ---
-    if (showSeasonCounts.size > 0) {
-      const showRows: ShowReportRow[] = [];
-      for (const [showKey, seasonMap] of showSeasonCounts) {
-        const showName = showKey.replace(/\s*\(\d{4}\)$/, '');
-        const yearMatch = showKey.match(/\((\d{4})\)$/);
-        const year = yearMatch ? parseInt(yearMatch[1], 10) : undefined;
-        for (const [season, entry] of seasonMap) {
-          showRows.push({
-            name: showName,
-            year,
-            season,
-            episodes: entry.count,
-            sourceDir: entry.sourceDir,
-            outputDir: entry.outputDir,
-          });
+    const reportPath = path.join(output, 'migration-report.json');
+    log(`Generating JSON report: ${reportPath}`);
+    try {
+      const records: ParsedNfo[] = [];
+      for await (const nfoPath of crawlDir(output)) {
+        try {
+          records.push(await parseNfo(nfoPath));
+        } catch {
+          // skip bad NFOs
         }
       }
-      const showCsvPath = path.join(output, 'migration-shows.csv');
-      fs.writeFileSync(showCsvPath, generateShowCsv(showRows), 'utf8');
-      log(`CSV report: ${showRows.length} show-season row(s) → ${showCsvPath}`);
-    }
-
-    // --- Movies CSV ---
-    if (movieReport.size > 0) {
-      const movieCsvPath = path.join(output, 'migration-movies.csv');
-      fs.writeFileSync(movieCsvPath, generateMovieCsv([...movieReport.values()]), 'utf8');
-      log(`CSV report: ${movieReport.size} movie row(s) → ${movieCsvPath}`);
+      const movies = buildMoviesJson(records);
+      const shows = buildTvShowsJson(records);
+      fs.writeFileSync(reportPath, JSON.stringify({ movies, shows }, null, 2), 'utf8');
+      log(`  JSON report: ${reportPath}`);
+    } catch (err) {
+      warn(`[error] Could not generate JSON report: ${(err as Error).message}`);
     }
   }
 
@@ -332,13 +266,12 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
     byFolder.set(dir, arr);
 
     if (vsmetaFile && isShow) {
-      const nameWithoutExt = path.basename(videoFile, path.extname(videoFile));
-      const parsedTitle = parseMovieFilename(nameWithoutExt);
+      const parsed = parsePath(videoFile);
       const sourceShowName = inferShowName(videoFile, opts.input);
-      const title = resolveShowTitle(meta, sourceShowName, parsedTitle);
+      const title = resolveShowTitle(meta, sourceShowName, parsed);
       if (title) {
         const year =
-          parsedTitle.year ||
+          parsed.year ||
           (meta.year ? meta.year : undefined) ||
           (meta.releaseDate ? extractYear(meta.releaseDate) : undefined);
         if (year) {
@@ -370,21 +303,13 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
   }
 
   // --- Phase 3: find TV show titles that have no determinable year ---
-  // These are offered to the user for manual year entry when opts.prompt is set.
-  // A "no year" show is one whose title is absent from showPremiereYears AND for
-  // which the filename and source folder name contain no parseable year.
-  // The check mirrors what computeShowPaths() does at runtime:
-  //   fileYear = parsedTitle.year || extractYearFromPath(sourceFile, sourceShowName)
-  // This extracts years from folder names, checking the immediate folder and
-  // walking up parent directories if needed (e.g., for disc folders without their
-  // own year but whose parent show folder has one).
   const extractFolderYear = (videoFile: string, name?: string): number | undefined => {
     if (!name) return undefined;
 
     // Try the immediate folder name
     const parens = name.match(/\((\d{4})\)/);
     if (parens) return parseInt(parens[1], 10);
-    const parsed = parseMovieFilename(name);
+    const parsed = parsePath(videoFile); // Use full videoFile path for context
     if (parsed.year && parsed.year >= 1900 && parsed.year <= 2100) {
       return parsed.year;
     }
@@ -399,7 +324,8 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
       const parentParens = parentFolderName.match(/\((\d{4})\)/);
       if (parentParens) return parseInt(parentParens[1], 10);
 
-      const parentParsed = parseMovieFilename(parentFolderName);
+      // Pass the full parentPath to parsePath for context
+      const parentParsed = parsePath(parentPath);
       if (parentParsed.year && parentParsed.year >= 1900 && parentParsed.year <= 2100) {
         return parentParsed.year;
       }
@@ -415,13 +341,6 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
     // Shallow-clone so we can safely mutate for folder-context inheritance below.
     const meta = { ...((vsmetaFile ? parsedMetaCache.get(vsmetaFile) : undefined) ?? emptyMeta()) };
 
-    // Mirror the folder-context inheritance that processFile() applies before type
-    // detection: files without their own vsmeta (or with an untyped vsmeta) inherit
-    // the show title from siblings in the same folder that DO have a .vsmeta.
-    // Without this, a file like "SeaQuest/Season 2/ep-no-vsmeta.avi" would resolve
-    // its title from the folder path ("SeaQuest") rather than from the sibling vsmeta
-    // ("seaQuest DSV"), missing the year that sibling already contributed to
-    // showPremiereYears under the correct title.
     if (meta.contentType !== 2 && meta.season == null && meta.episode == null) {
       const folderCtx = folderContextMap.get(path.dirname(videoFile));
       if (folderCtx?.isShow) {
@@ -432,15 +351,14 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
 
     if (detectMediaType(videoFile, meta, opts.type) !== 'show') continue;
 
-    const nameWithoutExt = path.basename(videoFile, path.extname(videoFile));
-    const parsedTitle = parseMovieFilename(nameWithoutExt);
+    const parsed = parsePath(videoFile);
     const sourceShowName = inferShowName(videoFile, opts.input);
-    const title = resolveShowTitle(meta, sourceShowName, parsedTitle);
+    const title = resolveShowTitle(meta, sourceShowName, parsed);
     if (!title) continue;
     if (showPremiereYears.has(title)) continue; // year already known (incl. from sibling vsmeta)
     if (showsWithNoYear.has(title)) continue;   // already noted
 
-    const fileYear = parsedTitle.year || extractFolderYear(videoFile, sourceShowName);
+    const fileYear = parsed.year || extractFolderYear(videoFile, sourceShowName);
     if (fileYear) continue; // file-path year will supply the year at runtime
 
     showsWithNoYear.set(title, videoFile);
@@ -474,31 +392,19 @@ function groupByTopLevelFolder(
 // Per-file processing
 // ---------------------------------------------------------------------------
 
-/** Per-season data accumulated for the CSV report (keyed by season number). */
-interface ShowSeasonEntry {
-  count: number;
-  /** Source folder where the season's episode files came from (first episode seen). */
-  sourceDir: string;
-  /** Output season folder the episode files were written to. */
-  outputDir: string;
-}
 
 interface ProcessFileArgs {
   videoFile: string;
   vsmetaFile: string | null;
   outputRoot: string;
   opts: MigrateOptions;
-  showMetaMap: Map<string, ShowNfoInput & { _nfoPath?: string }>;
+  showMetaMap: Map<string, { showTitle: string; year?: number; _nfoPath: string }>;
   /** Premiere year per normalised show title, computed by the pre-scan pass */
   showPremiereYears: Map<string, number>;
   /** Show/season info inferred from sibling .vsmeta files, keyed by directory */
   folderContextMap: Map<string, FolderContext>;
   /** Pre-parsed .vsmeta content — avoids re-reading files already parsed in pre-scan */
   parsedMetaCache: Map<string, VsMetaData>;
-  /** Accumulates per-show season data for the end-of-run CSV report */
-  showSeasonCounts: Map<string, Map<number, ShowSeasonEntry>>;
-  /** Accumulates movie rows (keyed by "title|year") for the end-of-run CSV report */
-  movieReport: Map<string, MovieReportRow>;
 }
 
 function processFile({
@@ -510,46 +416,27 @@ function processFile({
   showPremiereYears,
   folderContextMap,
   parsedMetaCache,
-  showSeasonCounts,
-  movieReport,
 }: ProcessFileArgs): 'ok' | 'skipped' {
-  const { type, move, dryRun, wetRun, overwrite, noImages, log, warn } = opts;
+  const { type, move, dryRun, overwrite, noImages, log, warn } = opts;
   // dryRun takes priority over wetRun
-  const effectiveWetRun = wetRun && !dryRun;
+  const effectiveWetRun = opts.wetRun && !dryRun;
 
   // Use the pre-parsed result from the cache — avoids re-reading the file a second time.
-  // A missing cache entry for an existing vsmetaFile means parsing failed during
-  // pre-scan (already warned); treat it the same as having no .vsmeta.
-  //
-  // Shallow-clone the cached object before any mutations so that folder-context
-  // inheritance and contentType corrections below do not corrupt the shared cache
-  // entry for other files processed in this run.
-  let meta: VsMetaData = { ...((vsmetaFile ? parsedMetaCache.get(vsmetaFile) : undefined) ?? emptyMeta()) };
+  const meta: VsMetaData = { ...((vsmetaFile ? parsedMetaCache.get(vsmetaFile) : undefined) ?? emptyMeta()) };
 
-  // Parse filename first — we need parsedEpisode before applying folder context so we
-  // can decide whether to inherit the season number from siblings.
   const nameWithoutExt = path.basename(videoFile, path.extname(videoFile));
-  const parsedEpisode = parseEpisodeFilename(nameWithoutExt);
-  const parsedTitle = parseMovieFilename(nameWithoutExt);
+  const parsed = parsePath(videoFile); // Use parsePath for full context
 
   // For files that are not positively identified as TV show episodes by their own
   // vsmeta, inherit key fields from sibling episodes in the same folder that DO have
-  // .vsmeta files.  This covers two cases:
-  //   1. No .vsmeta at all — emptyMeta defaults contentType to 1 (movie).
-  //   2. .vsmeta present but with contentType 1 and no season/episode numbers
-  //      (some encoders write incorrect content types).
-  // The check must happen BEFORE detectMediaType() so contentType is corrected first.
+  // .vsmeta files.
   let inferredFromFolder = false;
   if (meta.contentType !== 2 && meta.season == null && meta.episode == null) {
     const folderCtx = folderContextMap.get(path.dirname(videoFile));
     if (folderCtx?.isShow) {
       if (folderCtx.showTitle) meta.title = folderCtx.showTitle;
       meta.contentType = 2; // TV show — ensures detectMediaType() returns 'show'
-      // Only inherit the season number from siblings when the filename itself provides
-      // NO episode info at all.  If parsedEpisode is non-null we let computeShowPaths()
-      // use it for both season AND episode — setting meta.season here while leaving
-      // meta.episode null would force every episode to E01 and cause filename collisions.
-      if (parsedEpisode === null && folderCtx.season != null) {
+      if (parsed.episode === undefined && folderCtx.season != null) {
         meta.season = folderCtx.season;
       }
       inferredFromFolder = true;
@@ -560,7 +447,7 @@ function processFile({
   const mediaType = detectMediaType(videoFile, meta, type);
 
   if (mediaType === 'movie') {
-    const paths = computeMoviePaths(outputRoot, videoFile, meta, parsedTitle);
+    const paths = computeMoviePaths(outputRoot, videoFile, meta, parsed);
 
     log(`  [movie] ${path.basename(videoFile)} → ${paths.folder}`);
     if (dryRun) return 'ok';
@@ -570,73 +457,45 @@ function processFile({
     // Copy/move video file (or write placeholder in wet-run)
     copyOrMoveOrPlaceholder(videoFile, paths.videoFile, move, effectiveWetRun);
 
-    // Track for CSV report — same title/year derivation used by computeMoviePaths
-    {
-      const movieName = meta.title || parsedTitle.title;
-      const movieYear =
-        meta.year ||
-        parsedTitle.year ||
-        (meta.releaseDate ? extractYear(meta.releaseDate) : undefined);
-      const key = `${movieName}|${movieYear ?? ''}`;
-      if (!movieReport.has(key)) {
-        movieReport.set(key, {
-          name: movieName,
-          year: movieYear,
-          sourcePath: videoFile,
-          outputPath: paths.videoFile,
-        });
-      }
-    }
-
     // Copy .vsmeta (DS Video compatibility)
     if (vsmetaFile) {
       copyOrMoveOrPlaceholder(vsmetaFile, paths.vsmetaFile, false, effectiveWetRun);
-    }
 
-    // Write movie.nfo (always real — it's generated, not copied)
-    if (overwrite || !fs.existsSync(paths.nfoFile)) {
-      const nfo = generateMovieNfo({ meta, parsed: parsedTitle });
-      fs.writeFileSync(paths.nfoFile, nfo, 'utf8');
-    }
+      // Call converters on the NEW vsmeta location
+      if (!noImages) {
+        const imgResult = convertVsMetaToJpeg(paths.vsmetaFile, { overwrite, dryRun: effectiveWetRun });
+        if (imgResult.status === 'ERROR') warn(`    [image error] ${imgResult.message}`);
+      }
 
-    // Extract images (or write image placeholders in wet-run).
-    // Re-read the .vsmeta for image data — the pre-scan cache skips images to
-    // keep RAM usage low across thousands of files.
-    if (!noImages) {
-      const images = loadImagesForFile(vsmetaFile);
-      extractImages({ ...meta, ...images }, videoFile, paths.folder, false, effectiveWetRun, overwrite);
+      const nfoResult = convertVsMetaToNfo(paths.vsmetaFile, { overwrite, dryRun: false }); // Always write NFO even in wet-run
+      if (nfoResult.status === 'ERROR') warn(`    [nfo error] ${nfoResult.message}`);
     }
   } else {
     // Infer show name from the source folder structure if possible
     const sourceShowName = inferShowName(videoFile, opts.input);
 
     // If vsmeta didn't provide a show title, use the one from the filename parser
-    if (!meta.title && parsedEpisode?.showTitle) {
-      meta.title = parsedEpisode.showTitle;
-      meta.contentType = 2; // Ensure it is treated as a TV show title by resolveShowTitle
+    if (!meta.title && parsed.showTitle) {
+      meta.title = parsed.showTitle;
+      meta.contentType = 2;
     }
 
     // Look up the pre-computed premiere year for this show
-    const showTitleKey = resolveShowTitle(meta, sourceShowName, parsedTitle);
+    const showTitleKey = resolveShowTitle(meta, sourceShowName, parsed);
     const premiereYear = showPremiereYears.get(showTitleKey);
 
     let paths = computeShowPaths(
       outputRoot,
       videoFile,
       meta,
-      parsedEpisode,
-      parsedTitle,
+      parsed,
+      parsed,
       sourceShowName,
       premiereYear
     );
 
     // --- Extras detection -------------------------------------------------------
-    // Files that carry a recognised bonus/extras keyword (DVD Extras, Making of,
-    // Interview, Deleted Scenes, etc.) AND have no parseable SxxExx / NxNN episode
-    // pattern are routed to <ShowFolder>/Extras/ with their original filename
-    // preserved.  The season/episode machinery (clamping, NFO, CSV tracking) is
-    // bypassed entirely — extras are supplementary content, not episodes.
-    if (parsedEpisode === null && isExtrasFile(nameWithoutExt)) {
+    if (parsed.episode === undefined && isExtrasFile(nameWithoutExt)) {
       const extrasFolder = path.join(paths.showFolder, 'Extras');
       const origBasename = path.basename(videoFile);
       const extrasVideoFile = path.join(extrasFolder, origBasename);
@@ -649,16 +508,15 @@ function processFile({
 
       // Carry the .vsmeta sidecar alongside so DS Video still recognises the file
       if (vsmetaFile) {
-        copyOrMoveOrPlaceholder(
-          vsmetaFile,
-          path.join(extrasFolder, path.basename(vsmetaFile)),
-          false,
-          effectiveWetRun
-        );
+        const newVsmetaPath = path.join(extrasFolder, path.basename(vsmetaFile));
+        copyOrMoveOrPlaceholder(vsmetaFile, newVsmetaPath, false, effectiveWetRun);
+
+        // Convert images/nfo for extras too? The user didn't specify, but converters handle it.
+        if (!noImages) convertVsMetaToJpeg(newVsmetaPath, { overwrite, dryRun: effectiveWetRun });
+        convertVsMetaToNfo(newVsmetaPath, { overwrite, dryRun: false });
       }
 
-      // Accumulate show-level metadata so tvshow.nfo is still generated even when
-      // the show folder contains only extras (no regular episodes).
+      // Accumulate show-level metadata so we can prompt for year if needed
       if (!showMetaMap.has(paths.showKey)) {
         const showTitle = paths.showKey.replace(/\s*\(\d{4}\)$/, '');
         const yearStr = paths.showKey.match(/\((\d{4})\)$/)?.[1];
@@ -666,57 +524,25 @@ function processFile({
           showTitle,
           year: yearStr ? parseInt(yearStr, 10) : undefined,
           _nfoPath: paths.showNfoFile,
-        } as ShowNfoInput & { _nfoPath: string });
-      }
-      mergeShowMeta(showMetaMap.get(paths.showKey)!, meta);
-
-      // Extract show artwork (poster/fanart) if not already present
-      if (!noImages) {
-        const posterPath = path.join(paths.showFolder, 'poster.jpg');
-        const showHasPoster = fs.existsSync(posterPath) ||
-          (effectiveWetRun && fs.existsSync(posterPath + '.txt'));
-        if (!showHasPoster || overwrite) {
-          const images = loadImagesForFile(vsmetaFile);
-          extractImages({ ...meta, ...images }, videoFile, paths.showFolder, false, effectiveWetRun, overwrite);
-        }
+        });
       }
 
       return 'ok';
     }
-    // ---------------------------------------------------------------------------
 
-    // Clamp implausible season numbers (> 50) to Season 00.
-    // Cartoons and other content without formal season structure are often stored
-    // in DS Video with an absolute episode number encoded as the season number.
-    // Season 00 is the Jellyfin/Kodi convention for specials and unsorted episodes.
+    // Clamp implausible season numbers
     if (paths.season > 50) {
-      const originalSeason = paths.season;
-      const originalSource = paths.numberSource;
-
-      // When the vsmeta episode is equally implausible (e.g. the same integer overflow
-      // that produced the bad season) AND the filename contains no recognisable
-      // SxxExx / NxNN pattern, try extracting a leading run of digits from the
-      // filename as the episode identifier.
-      // Example: "011549DVD Hare Do MM.avi" → episode 11549.
       const clampedMeta = { ...meta, season: 0 };
-      if (parsedEpisode === null && (meta.episode ?? 0) > 10000) {
-        const leadingDigits = nameWithoutExt.match(/^(\d+)/);
-        if (leadingDigits) {
-          clampedMeta.episode = parseInt(leadingDigits[1], 10);
-        }
-      }
-
       paths = computeShowPaths(
         outputRoot,
         videoFile,
         clampedMeta,
-        parsedEpisode,
-        parsedTitle,
+        parsed,
+        parsed,
         sourceShowName,
         premiereYear
       );
-      warn(`  [warn] Implausible season ${originalSeason} for "${path.basename(videoFile)}" ` +
-        `(source: ${originalSource}) — placing in Season 00.`);
+      warn(`  [warn] Implausible season for "${path.basename(videoFile)}" — placing in Season 00.`);
     }
 
     const seNum = `S${formatSeason(paths.season)}E${formatEpisode(paths.episode)}`;
@@ -729,44 +555,20 @@ function processFile({
     // Copy/move video (or write placeholder in wet-run)
     copyOrMoveOrPlaceholder(videoFile, paths.videoFile, move, effectiveWetRun);
 
-    // Track for CSV report — increment episode count for this show+season,
-    // recording the source/output directories from the first episode seen.
-    {
-      const seasonMap = showSeasonCounts.get(paths.showKey) ?? new Map<number, ShowSeasonEntry>();
-      const existing = seasonMap.get(paths.season);
-      if (existing) {
-        existing.count++;
-      } else {
-        seasonMap.set(paths.season, {
-          count: 1,
-          sourceDir: path.dirname(videoFile),
-          outputDir: paths.seasonFolder,
-        });
-      }
-      showSeasonCounts.set(paths.showKey, seasonMap);
-    }
-
     // Copy .vsmeta (or placeholder)
     if (vsmetaFile) {
       copyOrMoveOrPlaceholder(vsmetaFile, paths.vsmetaFile, false, effectiveWetRun);
+
+      if (!noImages) {
+        const imgResult = convertVsMetaToJpeg(paths.vsmetaFile, { overwrite, dryRun: effectiveWetRun });
+        if (imgResult.status === 'ERROR') warn(`    [image error] ${imgResult.message}`);
+      }
+
+      const nfoResult = convertVsMetaToNfo(paths.vsmetaFile, { overwrite, dryRun: false });
+      if (nfoResult.status === 'ERROR') warn(`    [nfo error] ${nfoResult.message}`);
     }
 
-    // Write episode .nfo (always real — it's generated, not copied)
-    if (overwrite || !fs.existsSync(paths.nfoFile)) {
-      const nfo = generateEpisodeNfo({
-        meta,
-        parsedEpisode,
-        parsedTitle,
-        showTitle: paths.showKey.replace(/\s*\(\d{4}\)$/, ''),
-        // Pass the path-resolved values so the NFO always agrees with the actual
-        // season folder and episode filename (e.g. after implausible-season clamping).
-        resolvedSeason: paths.season,
-        resolvedEpisode: paths.episode,
-      });
-      fs.writeFileSync(paths.nfoFile, nfo, 'utf8');
-    }
-
-    // Accumulate show metadata for tvshow.nfo
+    // Accumulate show metadata for tracking
     if (!showMetaMap.has(paths.showKey)) {
       const showTitle = paths.showKey.replace(/\s*\(\d{4}\)$/, '');
       const year = paths.showKey.match(/\((\d{4})\)$/)?.[1];
@@ -774,23 +576,7 @@ function processFile({
         showTitle,
         year: year ? parseInt(year, 10) : undefined,
         _nfoPath: paths.showNfoFile,
-      } as ShowNfoInput & { _nfoPath: string });
-    }
-    const showInput = showMetaMap.get(paths.showKey)!;
-    mergeShowMeta(showInput, meta);
-
-    // Extract images for show root (poster/fanart) — only from first episode that has them.
-    // In wet-run we check for the placeholder file too, to avoid duplicates.
-    // Re-read .vsmeta for image data (pre-scan cache skips images to save RAM).
-    // Pass overwrite so extractImages respects the same flag as .nfo writes.
-    if (!noImages) {
-      const posterPath = path.join(paths.showFolder, 'poster.jpg');
-      const showHasPoster = fs.existsSync(posterPath) ||
-        (effectiveWetRun && fs.existsSync(posterPath + '.txt'));
-      if (!showHasPoster || overwrite) {
-        const images = loadImagesForFile(vsmetaFile);
-        extractImages({ ...meta, ...images }, videoFile, paths.showFolder, false, effectiveWetRun, overwrite);
-      }
+      });
     }
   }
 
@@ -865,23 +651,6 @@ async function runWithConcurrency<T>(
   await Promise.all(workers);
 }
 
-/**
- * Re-read a .vsmeta file to extract image data only (posterImage, backdropImage).
- * Returns an empty object when vsmetaFile is null or the read/parse fails.
- * Called during processFile() — separate from the pre-scan cache which skips images
- * to save RAM.
- */
-function loadImagesForFile(
-  vsmetaFile: string | null
-): Pick<VsMetaData, 'posterImage' | 'backdropImage'> {
-  if (!vsmetaFile) return {};
-  try {
-    const full = parseVsMeta(fs.readFileSync(vsmetaFile));
-    return { posterImage: full.posterImage, backdropImage: full.backdropImage };
-  } catch {
-    return {};
-  }
-}
 
 /** Return a blank VsMetaData with all required fields defaulted. */
 function emptyMeta(): VsMetaData {

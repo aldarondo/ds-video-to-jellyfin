@@ -11,7 +11,7 @@
  */
 
 import { detectMediaType } from '../src/detectors/media-type';
-import { VsMetaData } from '../src/parsers/vsmeta';
+import { VsMetaData } from 'vsmeta-parser';
 
 /** Minimal VsMetaData with no useful fields set (content type defaults to movie). */
 function emptyMeta(overrides: Partial<VsMetaData> = {}): VsMetaData {

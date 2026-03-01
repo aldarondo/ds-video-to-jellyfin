@@ -13,9 +13,9 @@
  * that a file under Movies/SomeSeries/Season 1/ is still detected as a TV show.
  */
 
-import path from 'path';
-import { VsMetaData } from '../parsers/vsmeta.js';
-import { parseEpisodeFilename, parseSeasonFolder } from '../utils/filename-parser.js';
+
+import { VsMetaData } from 'vsmeta-parser';
+import { parsePath } from 'parse-torrent-path';
 
 export type MediaType = 'movie' | 'show';
 
@@ -38,10 +38,8 @@ export function detectMediaType(
   if (meta.contentType === 2) return 'show';
   if (meta.season != null || meta.episode != null) return 'show';
 
-  const filename = path.basename(filePath, path.extname(filePath));
-
   // 2. Filename pattern
-  if (parseEpisodeFilename(filename) !== null) return 'show';
+  if (parsePath(filePath).episode !== undefined) return 'show';
 
   // 3 & 4. Scan ancestor folder names in a single pass.
   //   - Season-folder patterns return immediately (high priority).
@@ -57,10 +55,12 @@ export function detectMediaType(
   let pathHint: MediaType | undefined;
   for (const part of ancestorParts) {
     // Step 3: explicit season-folder patterns → definitive 'show'
-    if (parseSeasonFolder(part) !== null) return 'show';
-    if (/^Season\s+\d+$/i.test(part)) return 'show';
+    const isSeasonFolder =
+      /^Season\s+\d+$/i.test(part) ||
+      /^[Ss]\d{1,2}$/.test(part);
+    if (isSeasonFolder) return 'show';
     // Step 4: keyword hints (last match wins if multiple keywords appear)
-    if (/\bshows?\b/i.test(part))  pathHint = 'show';
+    if (/\bshows?\b/i.test(part)) pathHint = 'show';
     else if (/\bmovies?\b/i.test(part)) pathHint = 'movie';
   }
 

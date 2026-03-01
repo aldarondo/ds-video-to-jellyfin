@@ -1,7 +1,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { scanDirectory, ScanResult } from '../src/utils/scanner';
+import { vi } from 'vitest';
+import { scanDirectory } from '../src/utils/scanner';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -69,8 +70,8 @@ describe('scanDirectory', () => {
 
   it('detects all supported video extensions', () => {
     const exts = ['.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v',
-                  '.ts', '.m2ts', '.webm', '.flv', '.ogv', '.divx',
-                  '.mpg', '.mpeg', '.vob', '.iso'];
+      '.ts', '.m2ts', '.webm', '.flv', '.ogv', '.divx',
+      '.mpg', '.mpeg', '.vob', '.iso'];
     for (const ext of exts) {
       touch(path.join(root, `video${ext}`));
     }
@@ -141,6 +142,24 @@ describe('scanDirectory', () => {
     touch(path.join(root, 'real.mkv'));
     const results = scanDirectory(root);
     expect(results).toHaveLength(1);
+  });
+
+  it('ignores non-file non-directory entries', () => {
+    fs.mkdirSync(path.join(root, 'weird'));
+
+    const realReaddirSync = fs.readdirSync;
+    vi.spyOn(fs, 'readdirSync').mockImplementation((pathStr: fs.PathLike, options?: unknown) => {
+      if (pathStr === path.join(root, 'weird')) {
+        return [
+          { name: 'fake', isDirectory: () => false, isFile: () => false, isBlockDevice: () => true } as fs.Dirent
+        ];
+      }
+      return realReaddirSync(pathStr, options);
+    });
+
+    const results = scanDirectory(path.join(root, 'weird'));
+    expect(results).toHaveLength(0);
+    vi.restoreAllMocks();
   });
 
   it('skips @Recycle directory', () => {

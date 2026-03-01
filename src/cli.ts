@@ -11,11 +11,11 @@ import { Command } from 'commander';
 import path from 'path';
 import fs from 'fs';
 import readline from 'readline';
-import { migrate } from '../src/migrator.js';
+import { migrate } from './migrator.js';
 
-// __dirname is dist/bin/ after compilation, so package.json is two levels up
+// __dirname is dist/ after tsup compilation, so package.json is one level up
 const pkg = JSON.parse(
-  fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')
+  fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
 ) as { version: string };
 
 const program = new Command();
@@ -157,6 +157,11 @@ migrate({
     console.log(`  Processed : ${result.processed}`);
     console.log(`  Skipped   : ${result.skipped}`);
     console.log(`  Errors    : ${result.errors}`);
+
+    if (!options.dryRun) {
+      console.log(`  Report    : migration-report.json`);
+    }
+
     if (options.dryRun) {
       console.log('\nThis was a dry run. Run without --dry-run to apply changes.');
     } else if (options.wetRun) {

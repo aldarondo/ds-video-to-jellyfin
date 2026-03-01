@@ -42,6 +42,19 @@ describe('parseEpisodeFilename', () => {
     expect(r?.episodeTitle).toBe('Pilot');
   });
 
+  it('cleans alone episode titles with separators and extensions (line 130 cover)', () => {
+    const r = parseEpisodeFilename('Show - 01 - ._Title.mkv');
+    expect(r?.episode).toBe(1);
+    expect(r?.episodeTitle).toBe('Title');
+  });
+
+  it('handles isolated standalone episode patterns not caught by parsePath', () => {
+    // using a pattern that parsePath doesn't detect as an episode
+    const r = parseEpisodeFilename('Show_Name_-15-_More_Text.mkv');
+    expect(r?.episode).toBe(15);
+    expect(r?.episodeTitle).toBe('More Text');
+  });
+
   it('parses DS Video "S1 - E01" without title', () => {
     const r = parseEpisodeFilename('S1 - E01');
     expect(r?.season).toBe(1);
@@ -159,6 +172,19 @@ describe('parseMovieFilename', () => {
   it('converts dots to spaces when no year', () => {
     const r = parseMovieFilename('Some.Movie.Without.Year');
     expect(r.title).toBe('Some Movie Without Year');
+  });
+
+  it('parses mashed years like "DoctorWho2006"', () => {
+    const r = parseMovieFilename('DoctorWho2006.mkv');
+    expect(r.title).toBe('DoctorWho');
+    expect(r.year).toBe(2006);
+  });
+
+  it('uses fallback for mashed years not parsed by parsePath (e.g. year 2100)', () => {
+    // parse-torrent-path only matches up to 2099 for years, so 2100 triggers our fallback
+    const r = parseMovieFilename('DoctorWho2100');
+    expect(r.title).toBe('DoctorWho');
+    expect(r.year).toBe(2100);
   });
 
   // --- underscore / dot normalization ---

@@ -1,20 +1,5 @@
-# Dependencies
 node_modules/
-
-# TypeScript build output
 dist/
-
-# Test coverage reports
 coverage/
-
-# OS / editor artefacts
+*.log
 .DS_Store
-Thumbs.db
-*.swp
-*.swo
-.vscode/
-.idea/
-
-# Environment / local config
-.env
-.env.local

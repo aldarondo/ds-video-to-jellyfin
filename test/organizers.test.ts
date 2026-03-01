@@ -4,7 +4,7 @@ import {
   computeShowPaths,
   resolveShowTitle,
 } from '../src/organizers/show-organizer';
-import { VsMetaData } from '../src/parsers/vsmeta';
+import { VsMetaData } from 'vsmeta-parser';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -129,6 +129,26 @@ describe('computeMoviePaths', () => {
     expect(p.videoFile).toMatch(/\.avi$/);
     expect(p.vsmetaFile).toMatch(/\.avi\.vsmeta$/);
   });
+
+  it('handles empty title fallback (line 44 cover)', () => {
+    const p = computeMoviePaths(
+      ROOT,
+      '/source/movie.mkv',
+      emptyMeta({ title: '', year: 0 }),
+      { title: '' }
+    );
+    expect(p.folder).toBe(path.join(ROOT, ''));
+  });
+
+  it('handles invalid releaseDate year format (line 66 cover)', () => {
+    const p = computeMoviePaths(
+      ROOT,
+      '/source/movie.mkv',
+      emptyMeta({ title: 'Invalid Date', releaseDate: 'not-a-date' }),
+      { title: 'Invalid Date' }
+    );
+    expect(p.folder).toBe(path.join(ROOT, 'Invalid Date'));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -216,7 +236,7 @@ describe('computeShowPaths', () => {
       ROOT,
       '/source/ep.mkv',
       emptyMeta({ contentType: 2, title: 'My Show' }),
-      { season: 3, episode: 7, episodeTitle: 'Some Title' },
+      { title: '', season: 3, episode: 7, episodeTitle: 'Some Title' },
       { title: 'My Show S03E07 Some Title' },
     );
     expect(p.season).toBe(3);
@@ -245,7 +265,7 @@ describe('computeShowPaths', () => {
       ROOT,
       '/source/ep.mkv',
       emptyMeta({ contentType: 2, title: 'Breaking Bad', season: 1, episode: 1 }),
-      { season: 1, episode: 1, episodeTitle: 'Pilot' },
+      { title: '', season: 1, episode: 1, episodeTitle: 'Pilot' },
       { title: 'Breaking Bad S01E01 Pilot', year: 2008 },
     );
     expect(p.showFolder).toBe(path.join(ROOT, 'Breaking Bad (2008)'));
@@ -293,7 +313,7 @@ describe('computeShowPaths', () => {
       ROOT,
       '/source/DoctorWho2006 -4- The Girl in the Fireplace.divx',
       emptyMeta({ contentType: 2, title: 'Doctor Who', season: 2, episode: 1 }),
-      { season: 1, episode: 4, episodeTitle: 'The Girl in the Fireplace' },
+      { title: '', season: 1, episode: 4, episodeTitle: 'The Girl in the Fireplace' },
       { title: 'DoctorWho', year: 2006 },
     );
     expect(p.episode).toBe(4);           // from filename, not vsmeta E01
@@ -356,7 +376,7 @@ describe('computeShowPaths', () => {
       ROOT,
       '/source/ep.mkv',
       emptyMeta({ contentType: 2, title: 'My Show', season: 1, episode: 2 }),
-      { season: 1, episode: 2, episodeTitle: 'Cold Comfort' },
+      { title: '', season: 1, episode: 2, episodeTitle: 'Cold Comfort' },
       { title: 'My Show' },
     );
     expect(path.basename(p.videoFile)).toBe('My Show S01E02 Cold Comfort.mkv');
@@ -422,5 +442,57 @@ describe('computeShowPaths', () => {
       'The Wire'
     );
     expect(p.showFolder).toContain('The Wire');
+  });
+
+  it('handles multipart episode titles (line 127 cover)', () => {
+    const p = computeShowPaths(
+      ROOT,
+      '/source/ep.mkv',
+      emptyMeta({ contentType: 2, title: 'My Show', season: 1, episode: 1 }),
+      { title: '', season: 1, episode: 1, episodeTitle: ['Part', 'One'] },
+      { title: 'My Show' },
+    );
+    expect(path.basename(p.videoFile)).toBe('My Show S01E01 Part One.mkv');
+  });
+
+  it('inherits season from parsedEpisode when meta has only episode (line 114 cover)', () => {
+    const p = computeShowPaths(
+      ROOT,
+      '/source/ep.mkv',
+      emptyMeta({ episode: 5 }), // meta missing season
+      { title: '', season: 2, episode: 5 },
+      { title: 'My Show S02E05' },
+    );
+    expect(p.season).toBe(2);
+    expect(p.episode).toBe(5);
+    expect(p.numberSource).toBe('filename');
+  });
+
+  it('extracts year from grand-parent folder (line 207 cover)', () => {
+    // Current walk: currentPath = '/source/Show/Season 1'
+    // parent = '/source/Show'
+    // parentFolderName = 'Show' -> no year
+    // next iteration: currentPath = '/source/Show'
+    // parent = '/source'
+    // parentFolderName = 'source' -> no year
+    // Wait, let's make it '/source/Show (2010)/Season 1/ep.mkv'
+    const p = computeShowPaths(
+      ROOT,
+      '/source/Show (2010)/Season 1/ep.mkv',
+      emptyMeta({ title: 'Show' }),
+      null,
+      { title: 'Show' },
+      'Show'
+    );
+    expect(p.showFolder).toContain('Show (2010)');
+  });
+
+  it('handles falsy name in stripYearFromName (line 221 cover)', () => {
+    const title = resolveShowTitle(
+      emptyMeta({ contentType: 1, title: '' }),
+      '', // falsy sourceShowName
+      { title: 'Parsed' }
+    );
+    expect(title).toBe('Parsed');
   });
 });
