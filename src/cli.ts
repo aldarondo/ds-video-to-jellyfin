@@ -50,6 +50,10 @@ program
   .option('--no-images', 'Skip extracting poster and fanart images')
   .option('--overwrite', 'Overwrite existing files in the output directory')
   .option('-v, --verbose', 'Show detailed progress for each file')
+  .option(
+    '--years-file <path>',
+    'JSON file mapping TV show titles to premiere years (avoids interactive year prompts)'
+  )
   .addHelpText(
     'after',
     `
@@ -83,6 +87,7 @@ const options = program.opts<{
   images: boolean;
   overwrite: boolean;
   verbose: boolean;
+  yearsFile?: string;
 }>();
 
 // Resolve paths
@@ -121,12 +126,33 @@ const warn = (msg: string) => {
   console.warn(msg);
 };
 
+// Load years override map from --years-file if provided
+let yearsMap: Record<string, number> = {};
+if (options.yearsFile) {
+  const yearsFilePath = path.resolve(options.yearsFile);
+  if (!fs.existsSync(yearsFilePath)) {
+    console.error(`Error: --years-file not found: ${yearsFilePath}`);
+    process.exit(1);
+  }
+  yearsMap = JSON.parse(fs.readFileSync(yearsFilePath, 'utf8')) as Record<string, number>;
+}
+
 // Lazily create a readline interface only if the user is actually prompted
 // (i.e. at least one show has no determinable year).  Creating it eagerly
 // would keep Node's event loop alive and delay process exit in the common
 // case where all shows already have year information.
 let rl: readline.Interface | undefined;
 const prompt = (question: string): Promise<string> => {
+  // Extract show title from question: Year for "TITLE" (e.g. ...)
+  const match = question.match(/^Year for "([^"]+)"/);
+  if (match) {
+    const title = match[1];
+    if (yearsMap[title] !== undefined) {
+      const year = String(yearsMap[title]);
+      console.log(`[years-file] "${title}" → ${year}`);
+      return Promise.resolve(year);
+    }
+  }
   if (!rl) {
     rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   }
