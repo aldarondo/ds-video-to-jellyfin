@@ -32,6 +32,8 @@ export interface MigrateOptions {
   type: 'movies' | 'shows' | 'auto';
   /** Move files instead of copying */
   move: boolean;
+  /** Create hardlinks instead of copying (zero extra disk space; both paths point to the same data) */
+  hardlink: boolean;
   /** Don't write any files — just log what would happen */
   dryRun: boolean;
   /**
@@ -147,10 +149,14 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
         // This is treated as a fatal error: stop the entire migration immediately so
         // the user can resolve the collision before any more files are written.
         if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+          // Note: on Windows err.path is often set to the source rather than the
+          // destination by Node's fs internals — use the message text as fallback.
+          const destHint = (err as NodeJS.ErrnoException & { dest?: string }).dest ??
+            (err as Error).message;
           throw new Error(
             `Output file already exists (use --overwrite to replace it):\n` +
             `  Source:      ${videoFile}\n` +
-            `  Destination: ${(err as NodeJS.ErrnoException).path ?? (err as Error).message}`
+            `  Destination: ${destHint}`
           );
         }
         warn(`Error processing ${videoFile}: ${(err as Error).message}`);
@@ -417,7 +423,7 @@ function processFile({
   folderContextMap,
   parsedMetaCache,
 }: ProcessFileArgs): 'ok' | 'skipped' {
-  const { type, move, dryRun, overwrite, noImages, log, warn } = opts;
+  const { type, move, hardlink, dryRun, overwrite, noImages, log, warn } = opts;
   // dryRun takes priority over wetRun
   const effectiveWetRun = opts.wetRun && !dryRun;
 
@@ -455,11 +461,11 @@ function processFile({
     ensureDir(paths.folder);
 
     // Copy/move video file (or write placeholder in wet-run)
-    copyOrMoveOrPlaceholder(videoFile, paths.videoFile, move, effectiveWetRun);
+    copyOrMoveOrPlaceholder(videoFile, paths.videoFile, move, hardlink, effectiveWetRun);
 
     // Copy .vsmeta (DS Video compatibility)
     if (vsmetaFile) {
-      copyOrMoveOrPlaceholder(vsmetaFile, paths.vsmetaFile, false, effectiveWetRun);
+      copyOrMoveOrPlaceholder(vsmetaFile, paths.vsmetaFile, false, hardlink, effectiveWetRun);
 
       // Call converters on the NEW vsmeta location
       if (!noImages) {
@@ -504,12 +510,12 @@ function processFile({
       if (dryRun) return 'ok';
 
       ensureDir(extrasFolder);
-      copyOrMoveOrPlaceholder(videoFile, extrasVideoFile, move, effectiveWetRun);
+      copyOrMoveOrPlaceholder(videoFile, extrasVideoFile, move, hardlink, effectiveWetRun);
 
       // Carry the .vsmeta sidecar alongside so DS Video still recognises the file
       if (vsmetaFile) {
         const newVsmetaPath = path.join(extrasFolder, path.basename(vsmetaFile));
-        copyOrMoveOrPlaceholder(vsmetaFile, newVsmetaPath, false, effectiveWetRun);
+        copyOrMoveOrPlaceholder(vsmetaFile, newVsmetaPath, false, hardlink, effectiveWetRun);
 
         // Convert images/nfo for extras too? The user didn't specify, but converters handle it.
         if (!noImages) convertVsMetaToJpeg(newVsmetaPath, { overwrite, dryRun: effectiveWetRun });
@@ -553,11 +559,11 @@ function processFile({
     ensureDir(paths.seasonFolder);
 
     // Copy/move video (or write placeholder in wet-run)
-    copyOrMoveOrPlaceholder(videoFile, paths.videoFile, move, effectiveWetRun);
+    copyOrMoveOrPlaceholder(videoFile, paths.videoFile, move, hardlink, effectiveWetRun);
 
     // Copy .vsmeta (or placeholder)
     if (vsmetaFile) {
-      copyOrMoveOrPlaceholder(vsmetaFile, paths.vsmetaFile, false, effectiveWetRun);
+      copyOrMoveOrPlaceholder(vsmetaFile, paths.vsmetaFile, false, hardlink, effectiveWetRun);
 
       if (!noImages) {
         const imgResult = convertVsMetaToJpeg(paths.vsmetaFile, { overwrite, dryRun: effectiveWetRun });
@@ -730,16 +736,38 @@ function writePlaceholder(src: string, dest: string): void {
   fs.writeFileSync(placeholderPath, content, { encoding: 'utf8', flag: 'wx' });
 }
 
+/**
+ * Create a hardlink from `src` to `dest`.
+ *
+ * A hardlink occupies zero additional disk space — both paths point at the same
+ * underlying data.  Requires both paths to be on the same volume.
+ * Throws EEXIST if dest already exists (consistent with copyFile behaviour).
+ */
+function hardlinkFile(src: string, dest: string): void {
+  ensureDir(path.dirname(dest));
+  if (fs.existsSync(dest)) {
+    const err = Object.assign(new Error(`Destination already exists: ${dest}`), {
+      code: 'EEXIST',
+      dest,
+    });
+    throw err;
+  }
+  fs.linkSync(src, dest);
+}
+
 function copyOrMoveOrPlaceholder(
   src: string,
   dest: string,
   move: boolean,
+  hardlink: boolean,
   wetRun: boolean
 ): void {
   if (wetRun) {
     writePlaceholder(src, dest);
   } else if (move) {
     moveFile(src, dest);
+  } else if (hardlink) {
+    hardlinkFile(src, dest);
   } else {
     copyFile(src, dest);
   }

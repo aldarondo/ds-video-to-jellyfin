@@ -42,6 +42,7 @@ program
     'auto'
   )
   .option('--move', 'Move files instead of copying (frees up space but modifies source)')
+  .option('--hardlink', 'Create hardlinks instead of copying (zero extra disk space; both paths share the same data; requires same volume)')
   .option('--dry-run', 'Preview what would happen without writing any files')
   .option(
     '--wet-run',
@@ -82,6 +83,7 @@ const options = program.opts<{
   output: string;
   type: 'movies' | 'shows' | 'auto';
   move: boolean;
+  hardlink: boolean;
   dryRun: boolean;
   wetRun: boolean;
   images: boolean;
@@ -169,6 +171,7 @@ migrate({
   output: outputPath,
   type: options.type,
   move: options.move ?? false,
+  hardlink: options.hardlink ?? false,
   dryRun: options.dryRun ?? false,
   wetRun: options.wetRun ?? false,
   noImages: !options.images,
