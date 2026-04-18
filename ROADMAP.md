@@ -4,13 +4,12 @@
 Movies migration complete — verify output and add to Jellyfin
 
 ### 🔨 In Progress
-- **[Code]** Final movies migration running now (all bugs fixed, hardlinks, 2026-04-18)
+- **[Code]** TV Shows dry run (2026-04-18)
 
 ### 🟢 Ready (Next Up)
-- **[Human]** Verify `V:\jellyfin\Movies` looks correct — spot-check a few folders
-- **[Human]** Add `V:\jellyfin\Movies` to Jellyfin as a Movies library
-- **[Human]** Add output directory to DS Video — re-indexes, keeps both working in parallel
-- **[Code]** TV Shows migration: dry run, then schedule (after Movies confirmed working)
+- **[Code]** TV Shows wet migration — schedule after dry run passes cleanly
+- **[Human]** Add `V:\jellyfin\TV Shows` to Jellyfin library (after migration)
+- **[Human]** Add output directories to DS Video — re-indexes, keeps both working in parallel
 
 ### 📋 Backlog
 - Handle edge case: multi-version files (e.g., Director's Cut + Theatrical)
@@ -23,6 +22,7 @@ Movies migration complete — verify output and add to Jellyfin
 [Empty]
 
 ## ✅ Completed
+- Movies migration complete — 1929 files, 0 errors, added to Jellyfin ✓ (2026-04-18)
 - Fixed folder context contamination bug — movie files with own vsmeta no longer inherit show identity from siblings in the same folder (2026-04-18)
 - Fixed `detectMediaType` — "movies" keyword in ancestor path now overrides vsmeta contentType, so DS Video mislabelled files in a Movies folder route correctly (2026-04-18)
 - Fixed `--overwrite` flag — now properly wired through to hardlink/copy/move operations, not just NFO/image generation (2026-04-18)
