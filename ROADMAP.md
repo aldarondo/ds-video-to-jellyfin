@@ -1,17 +1,14 @@
 # ds-video-to-jellyfin — Roadmap
 
 ## Current Milestone
-Migrate Movies library to Jellyfin using hardlinks (zero extra disk space)
+Movies migration complete — verify output and add to Jellyfin
 
 ### 🔨 In Progress
-- **[Code]** Movies migration: scheduled for 8:00 PM tonight via Windows Task Scheduler (`ds-video-migrate-movies`)
-  - Uses `--hardlink --overwrite` — no disk space cost, both DS Video and Jellyfin see files
-  - Dry run passed cleanly: 1929 processed, 0 errors (2026-04-14)
-  - Before 8 PM: run `rmdir /S /Q "V:\jellyfin\Movies"` to clear partial wet-run output
+- **[Code]** Final movies migration running now (all bugs fixed, hardlinks, 2026-04-18)
 
 ### 🟢 Ready (Next Up)
-- **[Human]** After migration: verify `V:\jellyfin\Movies` looks correct
-- **[Human]** Add `V:\jellyfin\Movies` to Jellyfin library
+- **[Human]** Verify `V:\jellyfin\Movies` looks correct — spot-check a few folders
+- **[Human]** Add `V:\jellyfin\Movies` to Jellyfin as a Movies library
 - **[Human]** Add output directory to DS Video — re-indexes, keeps both working in parallel
 - **[Code]** TV Shows migration: dry run, then schedule (after Movies confirmed working)
 
@@ -26,6 +23,10 @@ Migrate Movies library to Jellyfin using hardlinks (zero extra disk space)
 [Empty]
 
 ## ✅ Completed
+- Fixed folder context contamination bug — movie files with own vsmeta no longer inherit show identity from siblings in the same folder (2026-04-18)
+- Fixed `detectMediaType` — "movies" keyword in ancestor path now overrides vsmeta contentType, so DS Video mislabelled files in a Movies folder route correctly (2026-04-18)
+- Fixed `--overwrite` flag — now properly wired through to hardlink/copy/move operations, not just NFO/image generation (2026-04-18)
+- Added `MST3K DVD 33` → 1988 to show-years.json to prevent interactive prompt blocking background runs (2026-04-18)
 - Added `--hardlink` flag to CLI — zero-space migration using NTFS hardlinks (2026-04-14)
 - Fixed misleading EEXIST error message that showed source path as destination (2026-04-14)
 - Dry run #3 — Movies with hardlink mode: 1929 processed, 0 errors ✓ (2026-04-14)
