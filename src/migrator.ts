@@ -347,7 +347,11 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
     // Shallow-clone so we can safely mutate for folder-context inheritance below.
     const meta = { ...((vsmetaFile ? parsedMetaCache.get(vsmetaFile) : undefined) ?? emptyMeta()) };
 
-    if (meta.contentType !== 2 && meta.season == null && meta.episode == null) {
+    // Only inherit folder context when the file has no vsmeta of its own.
+    // A file with its own vsmeta that explicitly marks it as a movie (contentType 1)
+    // should never be overridden by a show sibling in the same folder.
+    const hasOwnMovieMeta = vsmetaFile !== null && meta.contentType === 1;
+    if (!hasOwnMovieMeta && meta.contentType !== 2 && meta.season == null && meta.episode == null) {
       const folderCtx = folderContextMap.get(path.dirname(videoFile));
       if (folderCtx?.isShow) {
         if (folderCtx.showTitle) meta.title = folderCtx.showTitle;
@@ -436,8 +440,13 @@ function processFile({
   // For files that are not positively identified as TV show episodes by their own
   // vsmeta, inherit key fields from sibling episodes in the same folder that DO have
   // .vsmeta files.
+  // Guard: never apply folder context to a file that has its own vsmeta explicitly
+  // marking it as a movie (contentType 1).  Mixed folders (e.g. a show episode and
+  // several movies in the same directory) would otherwise cause every movie in the
+  // folder to be reclassified as a show episode.
   let inferredFromFolder = false;
-  if (meta.contentType !== 2 && meta.season == null && meta.episode == null) {
+  const hasOwnMovieMeta = vsmetaFile !== null && meta.contentType === 1;
+  if (!hasOwnMovieMeta && meta.contentType !== 2 && meta.season == null && meta.episode == null) {
     const folderCtx = folderContextMap.get(path.dirname(videoFile));
     if (folderCtx?.isShow) {
       if (folderCtx.showTitle) meta.title = folderCtx.showTitle;

@@ -32,3 +32,7 @@ CLI tool + library for migrating Synology DS Video (Video Station) collections t
 
 ---
 @~/Documents/GitHub/CLAUDE.md
+
+## Git Rules
+- Never create pull requests. Push directly to main.
+- solo/auto-push OK
