@@ -461,11 +461,11 @@ function processFile({
     ensureDir(paths.folder);
 
     // Copy/move video file (or write placeholder in wet-run)
-    copyOrMoveOrPlaceholder(videoFile, paths.videoFile, move, hardlink, effectiveWetRun);
+    copyOrMoveOrPlaceholder(videoFile, paths.videoFile, move, hardlink, effectiveWetRun, overwrite);
 
     // Copy .vsmeta (DS Video compatibility)
     if (vsmetaFile) {
-      copyOrMoveOrPlaceholder(vsmetaFile, paths.vsmetaFile, false, hardlink, effectiveWetRun);
+      copyOrMoveOrPlaceholder(vsmetaFile, paths.vsmetaFile, false, hardlink, effectiveWetRun, overwrite);
 
       // Call converters on the NEW vsmeta location
       if (!noImages) {
@@ -510,12 +510,12 @@ function processFile({
       if (dryRun) return 'ok';
 
       ensureDir(extrasFolder);
-      copyOrMoveOrPlaceholder(videoFile, extrasVideoFile, move, hardlink, effectiveWetRun);
+      copyOrMoveOrPlaceholder(videoFile, extrasVideoFile, move, hardlink, effectiveWetRun, overwrite);
 
       // Carry the .vsmeta sidecar alongside so DS Video still recognises the file
       if (vsmetaFile) {
         const newVsmetaPath = path.join(extrasFolder, path.basename(vsmetaFile));
-        copyOrMoveOrPlaceholder(vsmetaFile, newVsmetaPath, false, hardlink, effectiveWetRun);
+        copyOrMoveOrPlaceholder(vsmetaFile, newVsmetaPath, false, hardlink, effectiveWetRun, overwrite);
 
         // Convert images/nfo for extras too? The user didn't specify, but converters handle it.
         if (!noImages) convertVsMetaToJpeg(newVsmetaPath, { overwrite, dryRun: effectiveWetRun });
@@ -559,11 +559,11 @@ function processFile({
     ensureDir(paths.seasonFolder);
 
     // Copy/move video (or write placeholder in wet-run)
-    copyOrMoveOrPlaceholder(videoFile, paths.videoFile, move, hardlink, effectiveWetRun);
+    copyOrMoveOrPlaceholder(videoFile, paths.videoFile, move, hardlink, effectiveWetRun, overwrite);
 
     // Copy .vsmeta (or placeholder)
     if (vsmetaFile) {
-      copyOrMoveOrPlaceholder(vsmetaFile, paths.vsmetaFile, false, hardlink, effectiveWetRun);
+      copyOrMoveOrPlaceholder(vsmetaFile, paths.vsmetaFile, false, hardlink, effectiveWetRun, overwrite);
 
       if (!noImages) {
         const imgResult = convertVsMetaToJpeg(paths.vsmetaFile, { overwrite, dryRun: effectiveWetRun });
@@ -687,31 +687,33 @@ function ensureDir(dir: string): void {
 /**
  * Copy `src` to `dest`.
  *
- * Uses the COPYFILE_EXCL flag so the OS rejects the operation atomically if
- * `dest` already exists.  This prevents any silent data loss — the error is
- * surfaced to the caller (processFile) which logs it and increments the error
- * counter so the user knows exactly which files collided.
- *
- * Never call this with a pre-existence check that swallows the result; every
- * source file must either land at its destination or produce a visible error.
+ * Without overwrite: uses COPYFILE_EXCL so the OS rejects atomically if dest
+ * already exists — surfaces the collision to the caller as EEXIST.
+ * With overwrite: uses plain copyFileSync (allows replacement).
  */
-function copyFile(src: string, dest: string): void {
+function copyFile(src: string, dest: string, overwrite: boolean): void {
   ensureDir(path.dirname(dest));
-  // COPYFILE_EXCL: throws EEXIST if dest already exists — never silently overwrite.
-  fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
+  fs.copyFileSync(src, dest, overwrite ? 0 : fs.constants.COPYFILE_EXCL);
 }
 
 /**
  * Move `src` to `dest`.
  *
- * Explicitly checks for a pre-existing destination and throws rather than
- * letting renameSync silently replace it (POSIX rename() is atomic-replace,
- * which would destroy the existing file without warning).
+ * Without overwrite: throws if dest already exists to prevent silent data loss
+ * (POSIX rename() is atomic-replace which would destroy the existing file).
+ * With overwrite: unlinks dest first, then renames.
  */
-function moveFile(src: string, dest: string): void {
+function moveFile(src: string, dest: string, overwrite: boolean): void {
   ensureDir(path.dirname(dest));
   if (fs.existsSync(dest)) {
-    throw new Error(`Destination already exists: ${dest}`);
+    if (!overwrite) {
+      const err = Object.assign(new Error(`Destination already exists: ${dest}`), {
+        code: 'EEXIST',
+        dest,
+      });
+      throw err;
+    }
+    fs.unlinkSync(dest);
   }
   fs.renameSync(src, dest);
 }
@@ -741,16 +743,22 @@ function writePlaceholder(src: string, dest: string): void {
  *
  * A hardlink occupies zero additional disk space — both paths point at the same
  * underlying data.  Requires both paths to be on the same volume.
- * Throws EEXIST if dest already exists (consistent with copyFile behaviour).
+ *
+ * Without overwrite: throws EEXIST if dest already exists.
+ * With overwrite: unlinks the existing dest entry first (safe — the original
+ * source inode is unaffected), then creates the new hardlink.
  */
-function hardlinkFile(src: string, dest: string): void {
+function hardlinkFile(src: string, dest: string, overwrite: boolean): void {
   ensureDir(path.dirname(dest));
   if (fs.existsSync(dest)) {
-    const err = Object.assign(new Error(`Destination already exists: ${dest}`), {
-      code: 'EEXIST',
-      dest,
-    });
-    throw err;
+    if (!overwrite) {
+      const err = Object.assign(new Error(`Destination already exists: ${dest}`), {
+        code: 'EEXIST',
+        dest,
+      });
+      throw err;
+    }
+    fs.unlinkSync(dest);
   }
   fs.linkSync(src, dest);
 }
@@ -760,15 +768,16 @@ function copyOrMoveOrPlaceholder(
   dest: string,
   move: boolean,
   hardlink: boolean,
-  wetRun: boolean
+  wetRun: boolean,
+  overwrite: boolean
 ): void {
   if (wetRun) {
     writePlaceholder(src, dest);
   } else if (move) {
-    moveFile(src, dest);
+    moveFile(src, dest, overwrite);
   } else if (hardlink) {
-    hardlinkFile(src, dest);
+    hardlinkFile(src, dest, overwrite);
   } else {
-    copyFile(src, dest);
+    copyFile(src, dest, overwrite);
   }
 }
