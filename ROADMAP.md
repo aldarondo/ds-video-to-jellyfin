@@ -1,14 +1,14 @@
 # ds-video-to-jellyfin — Roadmap
 
 ## Current Milestone
-TV Shows migration
+Jellyfin library setup
 
 ### 🔨 In Progress
-- **[Code]** TV Shows wet migration — run #2 with SMB-cache fix (2026-04-18)
+[Empty]
 
 ### 🟢 Ready (Next Up)
+- **[Human]** Add `V:\jellyfin\TV Shows` to Jellyfin library
 - **[Human]** Trigger Jellyfin library rescan for Movies (confirm count ~1,795 after stale-folder cleanup)
-- **[Human]** Add `V:\jellyfin\TV Shows` to Jellyfin library (after migration)
 - **[Human]** Add output directories to DS Video — re-indexes, keeps both working in parallel
 
 ### 📋 Backlog
@@ -22,6 +22,9 @@ TV Shows migration
 [Empty]
 
 ## ✅ Completed
+- TV Shows migration complete — 21,757 files, 0 errors, hardlinks, all 551 groups ✓ (2026-04-19)
+- Fixed hardlinkFile SMB rename-over-existing (EPERM) — link-to-temp → unlink-dest → rename (2026-04-19)
+- Fixed vsmeta episode integer overflow (2^64-1) — clamp to S00E00 when episode > 9999 or non-safe-integer (2026-04-19)
 - Surgically removed 47 stale Season subfolders + 38 empty parent folders from V:\jellyfin\Movies — no originals lost (hardlinks preserved) ✓ (2026-04-18)
 - Movies migration complete — 1929 files, 0 errors, added to Jellyfin ✓ (2026-04-18)
 - Fixed folder context contamination bug — movie files with own vsmeta no longer inherit show identity from siblings in the same folder (2026-04-18)
