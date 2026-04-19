@@ -14,11 +14,12 @@ Jellyfin library setup
 - Add support for music video detection — needs design
 - Integration test against a real NAS mount point — needs test infrastructure
 
+
 ### 🔴 Blocked
 [Empty]
 
 ## ✅ Completed
-- Published as npm package v1.0.0 ✓ (2026-04-19)
+- Bumped to v1.0.0 — production-ready after successful migration ✓ (2026-04-19)
 - README updated — --hardlink, --years-file, fixed detection table, updated migration strategy ✓ (2026-04-19)
 - Added pre-scan timing and 10% progress checkpoints — no more 21k-line pre-scan floods ✓ (2026-04-19)
 - TV Shows added to Jellyfin library, scan kicked off ✓ (2026-04-19)
