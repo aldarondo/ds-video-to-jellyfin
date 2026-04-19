@@ -781,13 +781,24 @@ function hardlinkFile(src: string, dest: string, overwrite: boolean): void {
       throw err;
     }
 
-    // overwrite mode: link to a unique temp name and atomically rename over dest.
-    // This avoids the delete-then-link race where SMB/NAS caches can report the
-    // destination as already-absent (ENOENT from unlinkSync) yet still reject the
-    // subsequent linkSync with EEXIST.  A rename is atomic on both NTFS and SMB,
-    // so the swap is safe regardless of cache consistency.
+    // overwrite mode: link to a unique temp name, then unlink dest and rename.
+    // Why temp-first rather than unlink-then-link?
+    //   SMB/NAS caches can report the destination as absent (ENOENT from unlinkSync)
+    //   yet still reject the subsequent linkSync with EEXIST because the server
+    //   hasn't propagated the delete yet.  By linking to a fresh temp name first
+    //   (guaranteed not to exist) we avoid that race.
+    // Why unlink before rename rather than rename directly?
+    //   Windows SMB rejects rename when the destination already exists (EPERM).
+    //   POSIX rename() would replace atomically, but the Windows SMB dialect does not.
+    //   So we: (1) link to temp, (2) unlink existing dest, (3) rename temp → dest.
     const tmpDest = `${dest}.hlnk-tmp.${process.hrtime.bigint()}`;
     fs.linkSync(src, tmpDest);
+    try { fs.unlinkSync(dest); } catch (unlinkErr) {
+      if ((unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+        try { fs.unlinkSync(tmpDest); } catch { /* best-effort cleanup */ }
+        throw unlinkErr;
+      }
+    }
     fs.renameSync(tmpDest, dest);
   }
 }
