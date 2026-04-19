@@ -1,13 +1,13 @@
 # ds-video-to-jellyfin — Roadmap
 
 ## Current Milestone
-Movies migration complete — verify output and add to Jellyfin
+TV Shows migration
 
 ### 🔨 In Progress
-- **[Code]** TV Shows dry run (2026-04-18)
+- **[Code]** TV Shows wet migration — run #2 with SMB-cache fix (2026-04-18)
 
 ### 🟢 Ready (Next Up)
-- **[Code]** TV Shows wet migration — schedule after dry run passes cleanly
+- **[Human]** Trigger Jellyfin library rescan for Movies (confirm count ~1,795 after stale-folder cleanup)
 - **[Human]** Add `V:\jellyfin\TV Shows` to Jellyfin library (after migration)
 - **[Human]** Add output directories to DS Video — re-indexes, keeps both working in parallel
 
@@ -22,6 +22,7 @@ Movies migration complete — verify output and add to Jellyfin
 [Empty]
 
 ## ✅ Completed
+- Surgically removed 47 stale Season subfolders + 38 empty parent folders from V:\jellyfin\Movies — no originals lost (hardlinks preserved) ✓ (2026-04-18)
 - Movies migration complete — 1929 files, 0 errors, added to Jellyfin ✓ (2026-04-18)
 - Fixed folder context contamination bug — movie files with own vsmeta no longer inherit show identity from siblings in the same folder (2026-04-18)
 - Fixed `detectMediaType` — "movies" keyword in ancestor path now overrides vsmeta contentType, so DS Video mislabelled files in a Movies folder route correctly (2026-04-18)

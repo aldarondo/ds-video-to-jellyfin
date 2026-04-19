@@ -545,19 +545,23 @@ function processFile({
       return 'ok';
     }
 
-    // Clamp implausible season numbers
-    if (paths.season > 50) {
-      const clampedMeta = { ...meta, season: 0 };
+    // Clamp implausible season / episode numbers.
+    // vsmeta data occasionally contains overflow values (e.g. episode = 2^64-1)
+    // that produce colliding file names. Clamp anything beyond sane TV ranges to
+    // Season 00 / Episode 00 so the file is preserved without colliding.
+    const episodeOverflow = paths.episode > 9999 || !Number.isSafeInteger(paths.episode);
+    if (paths.season > 50 || episodeOverflow) {
+      const clampedMeta = { ...meta, season: 0, episode: 0 };
       paths = computeShowPaths(
         outputRoot,
         videoFile,
         clampedMeta,
-        parsed,
+        null,
         parsed,
         sourceShowName,
         premiereYear
       );
-      warn(`  [warn] Implausible season for "${path.basename(videoFile)}" — placing in Season 00.`);
+      warn(`  [warn] Implausible season/episode for "${path.basename(videoFile)}" — placing in Season 00.`);
     }
 
     const seNum = `S${formatSeason(paths.season)}E${formatEpisode(paths.episode)}`;
@@ -714,15 +718,17 @@ function copyFile(src: string, dest: string, overwrite: boolean): void {
  */
 function moveFile(src: string, dest: string, overwrite: boolean): void {
   ensureDir(path.dirname(dest));
-  if (fs.existsSync(dest)) {
-    if (!overwrite) {
-      const err = Object.assign(new Error(`Destination already exists: ${dest}`), {
-        code: 'EEXIST',
-        dest,
-      });
-      throw err;
+  if (overwrite) {
+    // Don't use fs.existsSync — SMB/NAS caches return stale results.
+    try { fs.unlinkSync(dest); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
-    fs.unlinkSync(dest);
+  } else if (fs.existsSync(dest)) {
+    const err = Object.assign(new Error(`Destination already exists: ${dest}`), {
+      code: 'EEXIST',
+      dest,
+    });
+    throw err;
   }
   fs.renameSync(src, dest);
 }
@@ -759,7 +765,14 @@ function writePlaceholder(src: string, dest: string): void {
  */
 function hardlinkFile(src: string, dest: string, overwrite: boolean): void {
   ensureDir(path.dirname(dest));
-  if (fs.existsSync(dest)) {
+  // Attempt the link directly first — fast path when dest doesn't exist yet.
+  try {
+    fs.linkSync(src, dest);
+    return;
+  } catch (linkErr) {
+    if ((linkErr as NodeJS.ErrnoException).code !== 'EEXIST') throw linkErr;
+
+    // dest already exists
     if (!overwrite) {
       const err = Object.assign(new Error(`Destination already exists: ${dest}`), {
         code: 'EEXIST',
@@ -767,9 +780,16 @@ function hardlinkFile(src: string, dest: string, overwrite: boolean): void {
       });
       throw err;
     }
-    fs.unlinkSync(dest);
+
+    // overwrite mode: link to a unique temp name and atomically rename over dest.
+    // This avoids the delete-then-link race where SMB/NAS caches can report the
+    // destination as already-absent (ENOENT from unlinkSync) yet still reject the
+    // subsequent linkSync with EEXIST.  A rename is atomic on both NTFS and SMB,
+    // so the swap is safe regardless of cache consistency.
+    const tmpDest = `${dest}.hlnk-tmp.${process.hrtime.bigint()}`;
+    fs.linkSync(src, tmpDest);
+    fs.renameSync(tmpDest, dest);
   }
-  fs.linkSync(src, dest);
 }
 
 function copyOrMoveOrPlaceholder(
