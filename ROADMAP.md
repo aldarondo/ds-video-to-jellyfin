@@ -12,7 +12,6 @@ Jellyfin library setup
 ### 📋 Backlog
 - Handle edge case: multi-version files (e.g., Director's Cut + Theatrical) — needs design
 - Add support for music video detection — needs design
-- Integration test against a real NAS mount point — needs test infrastructure
 
 
 ### 🔴 Blocked
