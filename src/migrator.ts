@@ -72,6 +72,8 @@ export interface MigrateResult {
  */
 export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
   const { input, output, dryRun, log, warn } = opts;
+  const runStart = Date.now();
+
   log(`Scanning ${input}...`);
   const scanResults = scanDirectory(input);
   log(`Found ${scanResults.length} video file(s).`);
@@ -86,8 +88,10 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
   // once in total rather than three times.
   const vsmetaCount = scanResults.filter(r => r.vsmetaFile !== null).length;
   log(`Pre-scanning metadata... (${vsmetaCount} .vsmeta file(s))`);
+  const preScanStart = Date.now();
   const { parsedMetaCache, showPremiereYears, folderContextMap, showsWithNoYear } =
     await buildPreScanData(scanResults, opts);
+  log(`Pre-scan complete in ${((Date.now() - preScanStart) / 1000).toFixed(1)}s.`);
   if (showPremiereYears.size > 0) {
     log(`Detected ${showPremiereYears.size} unique show(s) with year data.`);
   }
@@ -187,6 +191,12 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
     }
   }
 
+  const elapsed = Date.now() - runStart;
+  const elapsedStr = elapsed >= 60000
+    ? `${Math.floor(elapsed / 60000)}m ${Math.round((elapsed % 60000) / 1000)}s`
+    : `${(elapsed / 1000).toFixed(1)}s`;
+  log(`Total time: ${elapsedStr}`);
+
   return stats;
 }
 
@@ -242,8 +252,15 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
     (r): r is ScanResult & { vsmetaFile: string } => r.vsmetaFile !== null
   );
 
+  let preScanDone = 0;
+  const preScanTotal = vsmetaEntries.length;
+  // Thresholds at every 10% for progress logging (non-verbose only shows these;
+  // verbose mode also logs the individual file path via the else branch below).
+  const progressThresholds = new Set(
+    Array.from({ length: 10 }, (_, i) => Math.ceil(preScanTotal * (i + 1) / 10))
+  );
+
   await runWithConcurrency(vsmetaEntries, 32, async ({ vsmetaFile }) => {
-    opts.log(`  [pre-scan] ${path.relative(opts.input, vsmetaFile)}`);
     try {
       const buf = await fs.promises.readFile(vsmetaFile);
       // skipImages: true — skip base64 JPEG decoding; saves ~700 KB RAM per file
@@ -253,6 +270,14 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
     } catch (err) {
       opts.warn(`  [warn] Could not parse ${vsmetaFile}: ${(err as Error).message}`);
       // Absent from cache → processFile() treats it the same as "no .vsmeta".
+    }
+    const n = ++preScanDone;
+    if (progressThresholds.has(n)) {
+      // No leading spaces — visible even without --verbose
+      opts.log(`[pre-scan] ${n}/${preScanTotal} (${Math.round(n / preScanTotal * 100)}%)`);
+    } else {
+      // Two leading spaces — verbose-only (filtered by CLI log function)
+      opts.log(`  [pre-scan] ${path.relative(opts.input, vsmetaFile)}`);
     }
   });
 

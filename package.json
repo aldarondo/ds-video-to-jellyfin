@@ -1,7 +1,7 @@
 {
   "name": "ds-video-to-jellyfin",
-  "version": "0.1.0",
-  "description": "Reorganize a Synology DS Video collection into a Jellyfin-compatible structure, preserving .vsmeta files so DS Video keeps working during transition",
+  "version": "1.0.0",
+  "description": "Migrate a Synology DS Video collection to a Jellyfin-compatible folder structure — reorganizes files, generates .nfo metadata, and extracts artwork from .vsmeta sidecars",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

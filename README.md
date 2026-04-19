@@ -1,8 +1,8 @@
 # ds-video-to-jellyfin
 
-A Node.js CLI tool (and library) that reorganizes a [Synology DS Video](https://www.synology.com/en-us/dsm/packages/VideoStation) collection into a [Jellyfin](https://jellyfin.org)-compatible folder structure — while **keeping DS Video fully functional** throughout the transition.
+A Node.js CLI tool (and library) that migrates a [Synology DS Video](https://www.synology.com/en-us/dsm/packages/VideoStation) collection to a [Jellyfin](https://jellyfin.org)-compatible folder structure. Files are reorganized, `.nfo` metadata is generated, and artwork is extracted — all from the existing `.vsmeta` sidecar files DS Video already wrote.
 
-> **Note:** The core parsing and organization modules of this project are backed by **100% unit test coverage** to ensure a safe, robust, and reliable media migration experience.
+> **Note:** The core parsing and organization modules are backed by **100% unit test coverage**.
 
 ## How it works
 
@@ -12,25 +12,23 @@ This tool:
 
 1. **Scans** your DS Video library recursively for video files.
 2. **Parses** adjacent `.vsmeta` files using `vsmeta-parser`.
-3. **Auto-detects** media type using metadata and **path-aware** patterns from `parse-torrent-path`.
-4. **Reorganizes** files into the Jellyfin folder structure.
+3. **Auto-detects** media type (movie vs. TV show) using metadata and path-aware patterns.
+4. **Reorganizes** files into the Jellyfin folder structure — copying, moving, or hardlinking.
 5. **Generates `.nfo` files** using `vsmeta-to-nfo`.
-6. **Preserves `.vsmeta` files** alongside the video.
-7. **Extracts artwork** using `vsmeta-to-jpeg`.
-
-The result is a folder structure that works with **both** DS Video and Jellyfin simultaneously.
+6. **Preserves `.vsmeta` files** alongside the video so DS Video keeps working if needed.
+7. **Extracts artwork** (poster, fanart, thumbnail) using `vsmeta-to-jpeg`.
 
 ## Migration strategy
 
 ```
-1. Within DS Video, go to Settings → Library tab → Export Video Info icon for Movie and TV Show libraries
-2. Pre-check the conversion with either a wet or dry run to make sure all files will migrate
-3. Run the tool → new output directory with Jellyfin layout
-4. Add output directory to DS Video → re-indexes, works as before
-5. Add output directory to Jellyfin → reads .nfo files
-6. Use both in parallel as long as you need
-7. When ready, just stop using DS Video and optionally remove all .vsmeta files.
+1. Dry run — preview what would happen (nothing written)
+2. Wet run — validate folder structure and .nfo files without copying large video files
+3. Full run — copy, move, or hardlink everything to a new Jellyfin-compatible output
+4. Add output directory to Jellyfin → reads .nfo files, scans artwork
+5. (Optional) Keep DS Video working in parallel by also adding the output directory there
 ```
+
+**Recommended:** use `--hardlink` on a single-volume NAS. Hardlinks create zero extra disk usage — both the original and Jellyfin paths point to the same data.
 
 ## Output structure
 
@@ -39,7 +37,7 @@ The result is a folder structure that works with **both** DS Video and Jellyfin 
 ```
 output/
 └── Some Great Movie (2020)/
-    ├── Some Great Movie (2020).mkv        ← video (copied or moved)
+    ├── Some Great Movie (2020).mkv        ← video (copied, moved, or hardlinked)
     ├── Some Great Movie (2020).mkv.vsmeta ← DS Video metadata (copied)
     ├── movie.nfo                          ← Jellyfin metadata (generated)
     ├── poster.jpg
@@ -78,17 +76,23 @@ npx ds-video-to-jellyfin --input /path/to/library --output /path/to/output
 ds-video-to-jellyfin [options]
 
 Options:
-  -i, --input <path>            Source directory (your DS Video library)  [required]
-  -o, --output <path>           Output directory for Jellyfin layout      [required]
+  -i, --input <path>              Source directory (your DS Video library)  [required]
+  -o, --output <path>             Output directory for Jellyfin layout      [required]
   -t, --type <movies|shows|auto>  Force content type (default: auto)
-  --move                        Move files instead of copying
-  --dry-run                     Preview without writing any files
-  --wet-run                     Create folders and .nfo files; replace video/image files with .txt placeholders
-  --no-images                   Skip image extraction
-  --overwrite                   Overwrite existing output files
-  -v, --verbose                 Detailed progress output
-  -V, --version                 Show version
-  -h, --help                    Show help
+  --move                          Move files instead of copying
+  --hardlink                      Hardlink instead of copying (zero extra disk space;
+                                  requires source and output on the same volume)
+  --dry-run                       Preview without writing any files
+  --wet-run                       Create folders and .nfo files; replace video/image
+                                  files with .txt placeholders
+  --no-images                     Skip image extraction
+  --overwrite                     Overwrite existing output files
+  --years-file <path>             JSON file mapping TV show titles to premiere years
+                                  (avoids interactive prompts for shows with no
+                                  detectable year in filenames or .vsmeta)
+  -v, --verbose                   Detailed per-file progress output
+  -V, --version                   Show version
+  -h, --help                      Show help
 ```
 
 ## Examples
@@ -100,17 +104,36 @@ ds-video-to-jellyfin -i /volume1/video -o /volume1/jellyfin --dry-run
 # Wet run: validate folder layout and .nfo files without copying large video files
 ds-video-to-jellyfin -i /volume1/video -o /volume1/jellyfin --wet-run
 
+# Hardlink everything (zero extra disk space — recommended for single-volume NAS)
+ds-video-to-jellyfin -i /volume1/video -o /volume1/jellyfin --hardlink
+
 # Copy everything to a new Jellyfin-compatible structure
 ds-video-to-jellyfin -i /volume1/video -o /volume1/jellyfin
+
+# Move files (frees up source disk space, modifies original structure)
+ds-video-to-jellyfin -i /volume1/video -o /volume1/jellyfin --move
 
 # Force a single folder to be treated as TV shows
 ds-video-to-jellyfin -i /volume1/video/MyShow -o /volume1/jellyfin --type shows
 
-# Move (not copy) files to save disk space
-ds-video-to-jellyfin -i /volume1/video -o /volume1/jellyfin --move
+# Re-run to add new content to an existing output (overwrites changed files)
+ds-video-to-jellyfin -i /volume1/video -o /volume1/jellyfin --hardlink --overwrite
 
-# Re-run to update after adding new content
-ds-video-to-jellyfin -i /volume1/video -o /volume1/jellyfin --overwrite
+# Suppress year prompts for shows whose year isn't in filenames or .vsmeta
+ds-video-to-jellyfin -i /volume1/video -o /volume1/jellyfin \
+  --hardlink --years-file /path/to/show-years.json
+```
+
+### `--years-file` format
+
+A plain JSON object mapping show title to premiere year. Titles must match what the tool
+resolves (usually the `.vsmeta` title or the top-level folder name):
+
+```json
+{
+  "Mystery Science Theater 3000": 1988,
+  "Star Trek": 1966
+}
 ```
 
 ## Programmatic API
@@ -121,8 +144,9 @@ import { migrate } from 'ds-video-to-jellyfin';
 await migrate({
   input: '/path/to/ds-video-library',
   output: '/path/to/output',
-  type: 'auto',
+  type: 'auto',      // 'movies' | 'shows' | 'auto'
   move: false,
+  hardlink: true,    // zero extra disk space; requires same volume
   dryRun: false,
   wetRun: false,
   noImages: false,
@@ -132,17 +156,9 @@ await migrate({
 });
 ```
 
-```typescript
-import { parseVsMeta } from 'vsmeta-parser';
-import { readFileSync } from 'fs';
-
-const meta = parseVsMeta(readFileSync('myvideo.mkv.vsmeta'));
-console.log(meta.title, meta.season, meta.episode);
-```
-
 ## Supported input structures
 
-The tool handles various DS Video folder layouts:
+The tool handles varied DS Video folder layouts:
 
 ```
 /library/Movie Title (2020).mkv
@@ -150,22 +166,26 @@ The tool handles various DS Video folder layouts:
 /library/TV/Show Name (2020)/Season 1/S01E01.mkv
 /library/TV/Show Name/1x01 Episode Title.mkv
 /library/TV/Show Name/Season 1 Episode 1.mkv
+/library/Show Name Season 2/ep.mkv          ← embedded season in folder name
 ```
 
 ## Movie vs TV show auto-detection
 
-Each file is classified in priority order:
+Each file is classified using the following priority order:
 
-| # | Signal | Example |
-|---|--------|---------|
-| 1 | `.vsmeta` content type / season+episode fields | content type = 2 → show |
-| 2 | **Path-aware** filename episode pattern | `Season 01/ep1.mkv` → show |
-| 3 | Ancestor folder is a season folder | `Season 1/`, `S01/` → show |
-| 4 | Ancestor folder name contains **"show"** or **"movie"** (case-insensitive) | `TV Shows/` → show · `Movies/` → movie |
-| 5 | Default | → movie |
+| Priority | Signal | Result |
+|----------|--------|--------|
+| 1 | `--type movies` or `--type shows` flag | forced |
+| 2 | Ancestor folder matches `Season N` or `S01` pattern | → show |
+| 3 | Ancestor folder name contains **"movie"** | → movie (overrides vsmeta) |
+| 4 | `.vsmeta` content type = 2, or has season/episode fields | → show |
+| 5 | Filename matches `S01E01` or `1x01` episode pattern | → show |
+| 6 | Ancestor folder name contains **"show"** | → show |
+| 7 | Default | → movie |
 
-Step 3 takes priority over step 4, so a file inside `Movies/My Series/Season 1/` is
-still correctly detected as a TV show.
+Path signals (rows 2–3) take priority over `.vsmeta` content type (row 4). This means a file
+inside `Movies/SomeSeries/Season 1/` is correctly identified as a TV show despite the "movie"
+keyword — the season folder wins.
 
 Use `--type movies` or `--type shows` to override detection for an entire run.
 
@@ -174,7 +194,7 @@ Use `--type movies` or `--type shows` to override detection for an entire run.
 | Source | Priority | Used for |
 |--------|----------|----------|
 | `.vsmeta` embedded data | 1st (best) | All metadata fields |
-| Filename pattern parsing | 2nd | Season/episode, title, year |
+| Filename / path pattern parsing | 2nd | Season/episode numbers, title, year |
 | Folder structure | 3rd | Show name, season number |
 
 ## Artwork

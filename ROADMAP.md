@@ -10,16 +10,17 @@ Jellyfin library setup
 - **[Human]** Confirm Movies library count ~1,795 after Jellyfin rescan
 
 ### 📋 Backlog
-- Handle edge case: multi-version files (e.g., Director's Cut + Theatrical)
-- Add progress bar for large library scans
-- Publish as npm package for broader community use
-- Add support for music video detection
-- Integration test against a real NAS mount point
+- Handle edge case: multi-version files (e.g., Director's Cut + Theatrical) — needs design
+- Add support for music video detection — needs design
+- Integration test against a real NAS mount point — needs test infrastructure
 
 ### 🔴 Blocked
 [Empty]
 
 ## ✅ Completed
+- Published as npm package v1.0.0 ✓ (2026-04-19)
+- README updated — --hardlink, --years-file, fixed detection table, updated migration strategy ✓ (2026-04-19)
+- Added pre-scan timing and 10% progress checkpoints — no more 21k-line pre-scan floods ✓ (2026-04-19)
 - TV Shows added to Jellyfin library, scan kicked off ✓ (2026-04-19)
 - TV Shows migration complete — 21,757 files, 0 errors, hardlinks, all 551 groups ✓ (2026-04-19)
 - Fixed hardlinkFile SMB rename-over-existing (EPERM) — link-to-temp → unlink-dest → rename (2026-04-19)
