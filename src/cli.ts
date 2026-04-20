@@ -179,6 +179,11 @@ migrate({
   log,
   warn,
   prompt,
+  // All entries in the years-file act as overrides — they win over vsmeta-detected
+  // years so they can correct wrong DS Video metadata, not just fill gaps.
+  overrideYears: Object.keys(yearsMap).length > 0
+    ? new Map(Object.entries(yearsMap))
+    : undefined,
 })
   .then((result) => {
     rl?.close();

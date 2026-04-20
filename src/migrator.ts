@@ -59,6 +59,13 @@ export interface MigrateOptions {
    * Omit to name shows without a detectable year using only the show title.
    */
   prompt?: (question: string) => Promise<string>;
+  /**
+   * Year overrides keyed by resolved show title (e.g. "Heroes" → 2006).
+   * Takes priority over years detected from .vsmeta or filenames, so it can
+   * correct wrong years stored in DS Video metadata as well as fill gaps.
+   * Populated from --years-file at the CLI level.
+   */
+  overrideYears?: Map<string, number>;
 }
 
 export interface MigrateResult {
@@ -92,6 +99,16 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
   const { parsedMetaCache, showPremiereYears, folderContextMap, showsWithNoYear } =
     await buildPreScanData(scanResults, opts);
   log(`Pre-scan complete in ${((Date.now() - preScanStart) / 1000).toFixed(1)}s.`);
+
+  // Apply year overrides — these win over anything detected from .vsmeta or paths.
+  // Used to correct wrong years stored in DS Video metadata (e.g. "Heroes" → 2006
+  // instead of the corrupt 1961 in the vsmeta) as well as to fill gaps.
+  if (opts.overrideYears) {
+    for (const [title, year] of opts.overrideYears) {
+      showPremiereYears.set(title, year);
+    }
+  }
+
   if (showPremiereYears.size > 0) {
     log(`Detected ${showPremiereYears.size} unique show(s) with year data.`);
   }
@@ -664,7 +681,21 @@ function inferShowName(videoFile: string, inputRoot: string): string | undefined
       // subfolder).  Strip the trailing "Season N" / "SN" suffix so all seasons of
       // the same show share the same normalised name.
       const embeddedSeason = part.match(/^(.+?)\s+(?:Season\s+\d+|S\d{1,2})$/i);
-      return embeddedSeason ? embeddedSeason[1].trim() : part;
+      if (embeddedSeason) return embeddedSeason[1].trim();
+
+      // Handle torrent-style release group folders like
+      // "Humans.S02E02.HDTV.x264-TLA[ettv]" or "Show.Name.1x02.WEB-DL".
+      // Extract everything before the SxxExx / NxNN episode marker and
+      // normalise dots/underscores to spaces.
+      const torrentEpisode =
+        part.match(/^(.+?)[._]S\d{2}E\d{2}/i) ??
+        part.match(/^(.+?)[._]\d+x\d{2}/i);
+      if (torrentEpisode) {
+        const extracted = torrentEpisode[1].replace(/[._]+/g, ' ').trim();
+        if (extracted) return extracted;
+      }
+
+      return part;
     }
   }
   return undefined;
