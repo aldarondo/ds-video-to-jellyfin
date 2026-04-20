@@ -91,8 +91,20 @@ export function computeShowPaths(
   const showTitle = resolveShowTitle(meta, sourceShowName, parsedTitle);
 
   // Determine show year for folder naming.
-  const fileYear = parsedTitle.year || extractYearFromPath(sourceFile, sourceShowName);
-  const showYear = fileYear || premiereYear;
+  //
+  // Priority:
+  //   1. Year embedded in the episode filename itself (parsedTitle.year).
+  //      Keeps same-named reboots in separate folders — e.g. "Doctor Who (1963)"
+  //      vs "Doctor Who (2005)" — because the filenames carry the era year.
+  //   2. Premiere year from the pre-scan pass (minimum year seen across all
+  //      episodes of this show title).  Consolidates shows whose source library
+  //      was split into per-year folders — e.g. "Animaniacs (1993)", "Animaniacs
+  //      (1994)", … — all route to "Animaniacs (1993)" in the output.
+  //   3. Year from the folder/path structure as a last resort (e.g. a show folder
+  //      named "My Show (2010)" when no other year is determinable).
+  const filenameYear = parsedTitle.year;
+  const folderYear = extractYearFromPath(sourceFile, sourceShowName);
+  const showYear = filenameYear || premiereYear || folderYear;
 
   const showFolderName = showYear ? `${showTitle} (${showYear})` : showTitle;
 

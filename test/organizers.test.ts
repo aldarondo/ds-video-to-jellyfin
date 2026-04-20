@@ -306,6 +306,24 @@ describe('computeShowPaths', () => {
     expect(p.showFolder).toContain('2008');
   });
 
+  it('premiereYear beats folder-derived year (consolidates per-year-split libraries)', () => {
+    // DS Video sometimes stores a show split into per-year source folders:
+    // "Animaniacs (1993)/", "Animaniacs (1994)/", etc.
+    // The folder year (1994) must NOT scatter them into separate output folders.
+    // The premiereYear (minimum across all episodes = 1993) should win.
+    const p = computeShowPaths(
+      ROOT,
+      '/source/Animaniacs (1994)/ep.mkv',  // folder year = 1994
+      emptyMeta({ contentType: 2, title: 'Animaniacs', season: 2, episode: 1 }),
+      null,
+      { title: 'Animaniacs' },  // no year in the filename itself
+      'Animaniacs (1994)',       // sourceShowName carries the per-year folder name
+      1993                       // premiereYear = min across all episodes
+    );
+    expect(p.showFolder).toContain('1993');
+    expect(p.showFolder).not.toContain('1994');
+  });
+
   it('prefers parsedEpisode.episode over meta.episode when both are available', () => {
     // Simulates the Doctor Who case: vsmeta says E01 for multiple episodes
     // but filenames carry the real episode numbers (-2-, -4-, etc.)
