@@ -305,7 +305,9 @@ async function buildPreScanData(scanResults: ScanResult[], opts: MigrateOptions)
           parsed.year ||
           (meta.year ? meta.year : undefined) ||
           (meta.releaseDate ? extractYear(meta.releaseDate) : undefined);
-        if (year) {
+        // Guard against corrupt vsmeta values (e.g. year = 4) that would produce
+        // implausible folder names like "Arthur (4)".
+        if (year && year >= 1900 && year <= 2100) {
           const existing = showYearsMap.get(title) ?? [];
           existing.push(year);
           showYearsMap.set(title, existing);
